@@ -406,12 +406,13 @@ async function fetchData() {
                 state.stockPositionUnit = 'Share';
             }
 
+            await enrichPositionNames();
             renderStockPositions();
         } catch (e) {
             console.error("獲取股票庫存失敗", e);
             renderStockPositions();
         }
- 
+
         // 4. 取得近三日交割款
         try {
             const resp = await fetch(`${API_BASE}/portfolio/settlements`, {
@@ -1431,6 +1432,35 @@ function initIdleTimeout() {
     // 啟動計時與倒數顯示
     resetIdleTimer();
     startCountdownDisplay();
+}
+
+// ── 持倉名稱補查 ─────────────────────────────────────────────────────────
+// API 在 unit=Share 模式下回傳的 position 可能無 name 欄位
+// 先查 watchlist 快取，再打 contracts API 補齊
+async function enrichPositionNames() {
+    const nameless = state.stockPositions.filter(p => !p.name);
+    if (nameless.length === 0) return;
+
+    await Promise.all(nameless.map(async pos => {
+        // 先查自選股快取
+        const cached = state.watchlist.find(w => w.code === pos.code);
+        if (cached && cached.name) {
+            pos.name = cached.name;
+            return;
+        }
+        // 再打 contracts API
+        try {
+            const resp = await fetch(`${API_BASE}/data/contracts/${pos.code}?security_type=STK`);
+            if (resp.ok) {
+                const contract = await resp.json();
+                pos.name = contract.name || pos.code;
+                // 順便寫回 exchange（下單時用到）
+                if (contract.exchange) pos.exchange = contract.exchange;
+            }
+        } catch (e) {
+            console.warn(`無法查詢 ${pos.code} 名稱`, e);
+        }
+    }));
 }
 
 // ── 格式化小工具 ────────────────────────────────────────────────────────
