@@ -103,26 +103,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_proxy_request("POST")
         elif self.path == '/api/asset-history':
             self.handle_post_history()
-        elif self.path == '/api/remote-log':
-            self.handle_remote_log()
         else:
             self.send_error(404, "Not Found")
-
-    def handle_remote_log(self):
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        try:
-            data = json.loads(post_data.decode('utf-8'))
-            log_type = data.get('type', 'LOG')
-            message = data.get('message', '')
-            print(f"[瀏覽器 {log_type.upper()}] {message}")
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
-        except Exception as e:
-            print(f"處理遠端日誌出錯: {e}")
-            self.send_error(400, "Bad Request")
 
     def do_DELETE(self):
         if self.path.startswith('/proxy/'):
