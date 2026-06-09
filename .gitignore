@@ -1,0 +1,6 @@
+.env
+*.pfx
+__pycache__/
+*.log
+.git/
+*.json

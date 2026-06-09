@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-theme="dark" data-scheme="slate">
+<head>
+    <meta charset="UTF-8">
+    <script>
+        (function() {
+            const _log = console.log;
+            const _error = console.error;
+            const _warn = console.warn;
+            function send(type, args) {
+                const msg = Array.from(args).map(x => {
+                    try {
+                        if (x instanceof Error) {
+                            return x.name + ': ' + x.message + '\n' + x.stack;
+                        }
+                        return typeof x === 'object' ? JSON.stringify(x) : String(x);
+                    } catch(e) { return String(x); }
+                }).join(' ');
+                fetch('http://127.0.0.1:8081/api/remote-log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: type, message: msg })
+                }).catch(()=>{});
+            }
+            console.log = function() { _log.apply(console, arguments); send('log', arguments); };
+            console.error = function() { _error.apply(console, arguments); send('error', arguments); };
+            console.warn = function() { _warn.apply(console, arguments); send('warn', arguments); };
+            window.onerror = function(message, source, lineno, colno, error) {
+                send('exception', [`${message} at ${source}:${lineno}:${colno}`, error]);
+            };
+            window.onunhandledrejection = function(event) {
+                send('unhandledrejection', [event.reason]);
+            };
+        })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系統監控儀表板</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- ── Left Sidebar (Slim & Disguised) ── -->
+        <aside class="sidebar">
+            <div class="sidebar-top">
+                <div class="sidebar-brand">
+                    <!-- Terminal/Console Icon -->
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="4 17 10 11 4 5"></polyline>
+                        <line x1="12" y1="19" x2="20" y2="19"></line>
+                    </svg>
+                    <span>系統監控</span>
+                </div>
+                <ul class="sidebar-menu" style="margin-top: 24px;">
+                    <li class="sidebar-item active" data-view="dashboard">
+                        <!-- Activity/Analytics Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="7" height="9"></rect>
+                            <rect x="14" y="3" width="7" height="5"></rect>
+                            <rect x="14" y="12" width="7" height="9"></rect>
+                            <rect x="3" y="16" width="7" height="5"></rect>
+                        </svg>
+                        <span>資訊總覽</span>
+                    </li>
+                    <li class="sidebar-item" data-view="positions">
+                        <!-- Server Stack Icon (represents Positions) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="12" x2="2" y2="12"></line>
+                            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
+                            <line x1="6" y1="16" x2="6.01" y2="16"></line>
+                            <line x1="10" y1="16" x2="10.01" y2="16"></line>
+                        </svg>
+                        <span>庫存部位</span>
+                    </li>
+                    <li class="sidebar-item" data-view="watchlist">
+                        <!-- Line Chart Icon (represents Watchlist) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3v18h18"></path>
+                            <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"></path>
+                        </svg>
+                        <span>自選監控</span>
+                    </li>
+                    <li class="sidebar-item" data-view="api-status">
+                        <!-- Network Signal Icon (represents API Stats) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                            <path d="M8.58 16.14a7 7 0 0 1 6.84 0"></path>
+                            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                        </svg>
+                        <span>API 流量狀態</span>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="sidebar-bottom" style="width: 100%;">
+                <ul class="sidebar-menu">
+                    <li class="sidebar-item" data-view="settings">
+                        <!-- Settings Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        <span>系統設定</span>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- ── Main Panel ── -->
+        <main class="main-panel">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-title-container">
+                    <span class="header-title">系統狀態控制台</span>
+                    <div class="server-status">
+                        <span class="status-dot" id="server-status-dot"></span>
+                        <span id="server-status-text">伺服器已離線</span>
+                    </div>
+                </div>
+                <div class="header-controls">
+                    <!-- Account Switcher -->
+                    <select class="account-selector" id="account-selector">
+                        <option value="">無啟動的連線</option>
+                    </select>
+
+                    <!-- Color Mode Selector (Stealth) -->
+                    <select class="scheme-selector" id="scheme-selector" title="配色模式">
+                        <option value="slate">科技藍調模式 (Jira / AWS 風格)</option>
+                        <option value="stealth">隱形黑白模式 (無色彩標示)</option>
+                        <option value="muted">柔和傳統模式 (低對比紅綠)</option>
+                    </select>
+
+                    <!-- Dark/Light Theme Button -->
+                    <button class="btn-icon" id="theme-toggle" title="切換亮/暗主題">
+                        <!-- Sun Icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="theme-icon-light">
+                            <circle cx="12" cy="12" r="5"></circle>
+                            <line x1="12" y1="1" x2="12" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="23"></line>
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                            <line x1="1" y1="12" x2="3" y2="12"></line>
+                            <line x1="21" y1="12" x2="23" y2="12"></line>
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- ── Content Panels ── -->
+            <div class="content-view">
+                
+                <!-- ── VIEW 1: DASHBOARD OVERVIEW ── -->
+                <section class="view-section active" id="view-dashboard">
+                    <!-- Overview Metrics Grid -->
+                    <div class="grid-overview">
+                        <!-- Cash Balance Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect><line x1="12" y1="4" x2="12" y2="20"></line></svg>
+                                    現貨可用餘額
+                                </span>
+                            </div>
+                            <div class="metric-value" id="cash-balance">--</div>
+                            <div class="metric-subtitle">證券帳戶餘額 (TWD)</div>
+                        </div>
+
+                        <!-- Trading Limit Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                                    交易額度監控
+                                </span>
+                                <span class="metric-subtitle" id="limit-pct">0%</span>
+                            </div>
+                            <div class="metric-value" id="limit-available">--</div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" id="limit-progress"></div>
+                            </div>
+                            <div class="metric-subtitle" id="limit-summary">已用: -- / 總額: --</div>
+                        </div>
+
+                        <!-- Futures Margin Card (Conditional Display) -->
+                        <div class="card" id="futures-card" style="display: none;">
+                            <div class="card-header">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+                                    期貨保證金
+                                </span>
+                                <span id="futures-risk-badge" class="badge-up">風險指標: --</span>
+                            </div>
+                            <div class="metric-value" id="futures-balance">--</div>
+                            <div class="metric-subtitle">未平倉損益: <span id="futures-open-pnl">--</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Layout: Main Content (Chart + Settlements) -->
+                    <div class="grid-main">
+                        <!-- Asset System Performance Chart (Canvas) -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                                    總資產歷史趨勢 (90天動態)
+                                </span>
+                                <span class="metric-subtitle" id="trend-summary">資產加總: --</span>
+                            </div>
+                            <div class="trend-canvas-container">
+                                <canvas id="trend-chart" style="width: 100%; height: 100%;"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Settlements Panel -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                                    交割款查詢
+                                </span>
+                            </div>
+                            <div class="metric-subtitle">近三日交割淨額</div>
+                            <div class="settlement-grid" id="settlements-container">
+                                <div class="settlement-item">
+                                    <div class="settlement-date">T-0</div>
+                                    <div class="settlement-amount">--</div>
+                                </div>
+                                <div class="settlement-item">
+                                    <div class="settlement-date">T+1</div>
+                                    <div class="settlement-amount">--</div>
+                                </div>
+                                <div class="settlement-item">
+                                    <div class="settlement-date">T+2</div>
+                                    <div class="settlement-amount">--</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ── VIEW 2: POSITIONS ── -->
+                <section class="view-section" id="view-positions">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">證券庫存部位列表 (點擊代碼即可開啟下單面板)</span>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table" id="stock-positions-table">
+                                <thead>
+                                    <tr>
+                                        <th>股票代號</th>
+                                        <th>股票名稱</th>
+                                        <th>交易方向</th>
+                                        <th>持有數量 (股)</th>
+                                        <th>買進均價</th>
+                                        <th>目前現價</th>
+                                        <th>未實現損益</th>
+                                        <th>損益率</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; color: var(--text-muted);">正在讀取證券庫存數據...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Futures Positions (Conditionally shown if exists) -->
+                    <div class="card" id="futures-positions-card" style="display: none; margin-top: 24px;">
+                        <div class="card-header">
+                            <span class="card-title">期貨與選擇權部位列表</span>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table" id="futures-positions-table">
+                                <thead>
+                                    <tr>
+                                        <th>合約代號</th>
+                                        <th>交易方向</th>
+                                        <th>持有口數</th>
+                                        <th>成交均價</th>
+                                        <th>目前現價</th>
+                                        <th>未實現損益</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="6" style="text-align: center; color: var(--text-muted);">正在讀取期貨部位數據...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ── VIEW 3: WATCHLIST ── -->
+                <section class="view-section" id="view-watchlist">
+                    <div class="grid-main">
+                        <!-- Watchlist Monitor -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">自選監控清單 (點擊商品開啟右側明細)</span>
+                            </div>
+                            
+                            <div class="watchlist-container">
+                                <div class="watchlist-search">
+                                    <input type="text" class="input-text" id="watchlist-search-input" placeholder="輸入股票代號 (例如 2330, 2317)">
+                                    <button class="btn-primary" id="btn-add-watchlist">新增監控</button>
+                                </div>
+                                
+                                <div id="watchlist-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                                    <!-- Watchlist items loaded here -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Watchlist Item Details -->
+                        <div class="card" id="watchlist-detail-card" style="opacity: 0.5; pointer-events: none;">
+                            <div class="card-header">
+                                <span class="card-title" id="detail-card-title">商品詳細資訊</span>
+                                <button class="btn-icon" id="btn-remove-watchlist" style="display: none;" title="從監控清單移除">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                </button>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 16px;">
+                                <div>
+                                    <h2 style="font-size: 1.5rem; font-family: var(--font-mono);" id="detail-code">----</h2>
+                                    <p class="metric-subtitle" id="detail-name">請從自選清單點選股票以載入即時 Ticks 圖表</p>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-family: var(--font-mono); font-size: 0.95rem;">
+                                    <div>昨日參考價: <span id="detail-ref" style="font-weight:600;">--</span></div>
+                                    <div>今日開盤價: <span id="detail-open" style="font-weight:600;">--</span></div>
+                                    <div>最高價格: <span id="detail-high" style="font-weight:600;">--</span></div>
+                                    <div>最低價格: <span id="detail-low" style="font-weight:600;">--</span></div>
+                                    <div>最新成交價: <span id="detail-close" style="font-weight:600;">--</span></div>
+                                    <div>今日成交量: <span id="detail-volume" style="font-weight:600;">--</span></div>
+                                </div>
+                                <hr style="border: 0; border-top: 1px solid var(--border-color);">
+                                <div class="trend-canvas-container" style="height: 150px;">
+                                    <canvas id="detail-tick-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ── VIEW 4: API STATUS ── -->
+                <section class="view-section" id="view-api-status">
+                    <div class="card" style="max-width: 600px;">
+                        <div class="card-header">
+                            <span class="card-title">API 連線與流量狀態</span>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                            <div class="form-group">
+                                <span class="form-label">活動中連線數量</span>
+                                <div class="metric-value" id="api-connections" style="font-size: 1.5rem;">0</div>
+                            </div>
+                            <div class="form-group">
+                                <span class="form-label">今日已使用流量</span>
+                                <div class="metric-value" id="api-bytes-val" style="font-size: 1.5rem;">-- MB</div>
+                                <div class="progress-bar-container" style="height: 10px;">
+                                    <div class="progress-bar" id="api-bytes-progress" style="width: 0%;"></div>
+                                </div>
+                                <div class="metric-subtitle" id="api-bytes-summary">已用: -- MB / 上限: -- MB</div>
+                            </div>
+                            <div class="form-group">
+                                <span class="form-label">伺服器連線日誌</span>
+                                <div class="metric-subtitle" id="api-session-details" style="font-family: var(--font-mono); background-color: var(--bg-tertiary); padding: 12px; border-radius: 6px; white-space: pre-wrap;">正在載入 API 連線資料...</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ── VIEW 5: SETTINGS & CONFIGURATION ── -->
+                <section class="view-section" id="view-settings">
+                    <div class="grid-main">
+                        <!-- App configurations -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">系統與配色設定</span>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 20px;">
+                                <div class="form-group">
+                                    <span class="form-label">螢幕配色模式</span>
+                                    <p class="metric-subtitle">配合辦公室環境防窺，調整上漲與下跌的色彩標示。</p>
+                                    <select class="form-select" id="settings-scheme-selector" style="margin-top: 8px;">
+                                        <option value="slate">科技藍調模式 (推薦 / AWS 雲端監控風格)</option>
+                                        <option value="stealth">隱形黑白模式 (完全無色差 / 最佳防窺)</option>
+                                        <option value="muted">柔和傳統模式 (低對比紅綠標示)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label">資料同步頻率</span>
+                                    <p class="metric-subtitle">行情資訊與庫存帳務的定時刷新間隔。</p>
+                                    <select class="form-select" id="settings-refresh-selector" style="margin-top: 8px;">
+                                        <option value="5000">高頻刷新 (5 秒)</option>
+                                        <option value="15000" selected>一般刷新 (15 秒)</option>
+                                        <option value="30000">低頻監控 (30 秒)</option>
+                                        <option value="60000">僅收盤監控 (60 秒)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Asset History Backfill Table -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">資產歷史數據編輯器 (每日收盤)</span>
+                            </div>
+                            <p class="metric-subtitle">手動補錄或編輯過去日期的資產收盤總額（預設從 0 開始）。</p>
+                            
+                            <div style="margin-top: 16px;">
+                                <div class="history-editor-form">
+                                    <div class="form-group">
+                                        <span class="form-label">日期</span>
+                                        <input type="date" class="form-input mono" id="history-date-input">
+                                    </div>
+                                    <div class="form-group">
+                                        <span class="form-label">資產總額 (TWD)</span>
+                                        <input type="number" class="form-input mono" id="history-val-input" placeholder="例如: 1000000">
+                                    </div>
+                                    <button class="btn-primary" id="btn-save-history">儲存記錄</button>
+                                </div>
+                                
+                                <div class="settings-table-container">
+                                    <table class="data-table" id="history-backfill-table">
+                                        <thead>
+                                            <tr>
+                                                <th>日期</th>
+                                                <th>資產總值 (TWD)</th>
+                                                <th>管理操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <!-- Loaded dynamic rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                
+                <!-- ── App Footer (Stealth) ── -->
+                <footer class="app-footer">
+                    <span>© 2026 系統狀態主控台。版權所有。</span>
+                    <span>版本號: v1.2.0</span>
+                    <span>作者: JamesWu</span>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- ── Config Update Drawer (Hidden Trading Panel) ── -->
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <div class="drawer" id="order-drawer">
+        <!-- Drawer safety lock overlay -->
+        <div class="safety-overlay active" id="drawer-lock-overlay">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <h3 style="font-weight: 500;">安全鎖定狀態</h3>
+            <p class="metric-subtitle">在進行股票交易委託前，請點擊下方按鈕解除鎖定。</p>
+            <button class="btn-primary" id="btn-unlock-drawer" style="margin-top: 8px;">解除安全鎖</button>
+        </div>
+
+        <div class="drawer-header">
+            <span class="drawer-title" id="drawer-title-txt">送出證券委託交易單</span>
+            <button class="btn-icon" id="btn-close-drawer">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="drawer-content">
+            <div class="form-group">
+                <span class="form-label">股票代號</span>
+                <input type="text" class="form-input mono" id="order-code" readonly>
+            </div>
+            
+            <div class="form-group">
+                <span class="form-label">交易動作</span>
+                <select class="form-select" id="order-action">
+                    <option value="Buy">買進</option>
+                    <option value="Sell">賣出</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <span class="form-label">交易單位</span>
+                <select class="form-select" id="order-lot">
+                    <option value="Common" selected>整張 (以張為單位，1張=1000股)</option>
+                    <option value="IntradayOdd">零股 (以股為單位，1 ~ 999股)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <span class="form-label">交易條件</span>
+                <select class="form-select" id="order-cond">
+                    <option value="Standard">現股交易</option>
+                    <option value="Margin">融資交易</option>
+                    <option value="Short">融券交易</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <span class="form-label">價格類型</span>
+                <select class="form-select" id="order-price-type">
+                    <option value="LMT" selected>限價 (LMT)</option>
+                    <option value="MKT">市價 (MKT)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <span class="form-label">委託價格</span>
+                <input type="number" step="0.01" class="form-input mono" id="order-price" placeholder="輸入委託價格">
+            </div>
+
+            <div class="form-group">
+                <span class="form-label">委託數量</span>
+                <input type="number" step="1" min="1" class="form-input mono" id="order-qty" value="1">
+                <span class="metric-subtitle">請依據上方選定的「交易單位」輸入張數或股數。</span>
+            </div>
+        </div>
+        <div class="drawer-footer">
+            <button class="btn-secondary" id="btn-drawer-cancel">取消</button>
+            <button class="btn-primary" id="btn-drawer-submit">確認送出委託</button>
+        </div>
+    </div>
+
+    <!-- ── Order Confirmation Modal ── -->
+    <div class="modal-overlay" id="confirm-modal-overlay">
+        <div class="modal" id="confirm-modal">
+            <div class="modal-header">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>永豐證券 交易委託送出確認</span>
+            </div>
+            <div class="modal-content">
+                <p style="margin-bottom: 16px; color: var(--text-secondary); font-size: 0.95rem;">請務必仔細核對以下委託資料是否正確，送出後將直接送往交易所：</p>
+                <div class="confirm-details-grid">
+                    <div class="confirm-item"><span class="confirm-label">股票代號</span><span class="confirm-value mono" id="conf-code">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">交易動作</span><span class="confirm-value" id="conf-action">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">交易單位</span><span class="confirm-value" id="conf-lot">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">交易條件</span><span class="confirm-value" id="conf-cond">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">價格類型</span><span class="confirm-value" id="conf-price-type">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">委託價格</span><span class="confirm-value mono val-up" id="conf-price">-- 元</span></div>
+                    <div class="confirm-item"><span class="confirm-label">委託數量</span><span class="confirm-value mono" id="conf-qty">--</span></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btn-confirm-cancel">取消</button>
+                <button class="btn-primary" id="btn-confirm-submit" style="background-color: var(--color-accent); color: white;">確認送出</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Toast Notifications (Disguised Logs) ── -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
