@@ -370,26 +370,46 @@ async function fetchData() {
             document.getElementById('limit-progress').style.width = '0%';
         }
         
-        // 3. 取得股票庫存（unit: 1 = Unit.Share，回傳股數含零股）
+        // 3. 取得股票庫存
+        // 優先嘗試 unit=1（Unit.Share），讓 Shioaji 回傳總股數含零股
+        // 若 endpoint 不支援 unit 參數則 fallback 至預設（張數模式）
         try {
-            const resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
+            const basePayload = {
+                account_type: 'S',
+                broker_id: stockAcc.broker_id,
+                account_id: stockAcc.account_id,
+                person_id: stockAcc.person_id,
+            };
+
+            let resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    account_type: 'S',
-                    broker_id: stockAcc.broker_id,
-                    account_id: stockAcc.account_id,
-                    person_id: stockAcc.person_id,
-                    unit: 1  // Unit.Share：所有部位統一換算為股，含零股
-                })
+                body: JSON.stringify({ ...basePayload, unit: 1 }) // Unit.Share：含零股
             });
-            if (resp.ok) {
+
+            if (!resp.ok) {
+                // unit=1 不被支援，fallback 至不帶 unit（預設張數模式）
+                console.warn('position_unit unit=1 不支援，改用預設張數模式');
+                resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(basePayload)
+                });
+                if (resp.ok) {
+                    state.stockPositions = await resp.json();
+                    state.stockPositionUnit = 'Lot';
+                    renderStockPositions();
+                } else {
+                    renderStockPositions(); // 顯示空白狀態而非永久讀取中
+                }
+            } else {
                 state.stockPositions = await resp.json();
                 state.stockPositionUnit = 'Share';
                 renderStockPositions();
             }
         } catch (e) {
             console.error("獲取股票庫存失敗", e);
+            renderStockPositions(); // 顯示空白狀態
         }
  
         // 4. 取得近三日交割款
