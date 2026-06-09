@@ -1344,18 +1344,41 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 分鐘
 
 function initIdleTimeout() {
     const overlay = document.getElementById('idle-modal-overlay');
+    const countdownEl = document.getElementById('idle-countdown-text');
+    const countdownWrap = document.getElementById('idle-countdown');
+    let deadlineTs = Date.now() + IDLE_TIMEOUT_MS;
+    let countdownTimer = null;
+
+    function updateCountdown() {
+        const remaining = Math.max(0, deadlineTs - Date.now());
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        countdownEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+        // 剩 5 分鐘以下變黃色警示
+        if (remaining <= 5 * 60 * 1000) {
+            countdownWrap.classList.add('idle-warning');
+        } else {
+            countdownWrap.classList.remove('idle-warning');
+        }
+    }
+
+    function startCountdownDisplay() {
+        clearInterval(countdownTimer);
+        countdownTimer = setInterval(updateCountdown, 1000);
+        updateCountdown();
+    }
 
     function handleIdleTimeout() {
-        // 停止所有資料更新
+        clearInterval(countdownTimer);
         stopPolling();
         closeSSE();
-
-        // 顯示斷線提示
         overlay.style.display = 'flex';
     }
 
     function resetIdleTimer() {
         clearTimeout(state.idleTimer);
+        deadlineTs = Date.now() + IDLE_TIMEOUT_MS;
         state.idleTimer = setTimeout(handleIdleTimeout, IDLE_TIMEOUT_MS);
     }
 
@@ -1375,8 +1398,9 @@ function initIdleTimeout() {
         location.reload();
     });
 
-    // 啟動計時
+    // 啟動計時與倒數顯示
     resetIdleTimer();
+    startCountdownDisplay();
 }
 
 // ── 格式化小工具 ────────────────────────────────────────────────────────
