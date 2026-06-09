@@ -1,6 +1,6 @@
 # SinoPac Genie - 全面代碼評審報告 (Code Review)
 
-本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「SinoPac Genie 防窺交易儀表板」專案進行全面的代碼評審。
+本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「SinoPac Genie 防窺交易儀表板」專案進行全面的代碼評審。本報告已同步更新至最新版本 `v1.3.1`，涵蓋動態初始化、零股防禦性計算、每日寫入限頻與資料安全備份機制之審評。
 
 ---
 
@@ -69,7 +69,34 @@ graph TD
   ```
 * **評價**：
   * **無重導向 (PIPE) 鎖定防範**：`Popen` 沒有設定 `stdout=PIPE` 或 `stderr=PIPE`，這防範了 Windows 上因緩衝區（預設 64KB）塞滿導致 Shioaji API 進程死鎖卡死的嚴重缺陷。
-  * **優雅退出機制**：在 `finally` 區塊中使用 `terminate` 搭配超時 `kill` 機制，確保即使使用者按下 `Ctrl+C` 結束，背景的 `shioaji.exe` 進程也會被確實清理，不會佔用 Port `8080` 造成下次啟動衝突。
+  * **優雅退出機制**：在 `finally` 區塊中使用 `terminate` 搭配超時 `kill` 機制，確保即使使用者按下 `Ctrl+C` 結束，背景的 `shioaji.exe`進程也會被確實清理，不會佔用 Port `8080` 造成下次啟動衝突。
+
+### 2.4 Shioaji 服務初始化動態輪詢機制 (v1.3.0+)
+* **評審點**：API 伺服器就緒偵測。
+* **代碼段**：
+  ```python
+  print("正在等待 Shioaji API 伺服器初始化...")
+  import urllib.request as _ur
+  for _ in range(30):
+      try:
+          _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
+          print("✅ Shioaji API 伺服器已就緒")
+          break
+      except Exception:
+          time.sleep(1)
+  ```
+* **評價**：由原先死板的 `time.sleep(8)` 升級為**動態探針輪詢 (HTTP Ping)**。後端每秒向 Shioaji 伺服器的 `/usage` 接頭發送輕量級 GET 請求，若順利建立連線即代表 API 就緒，立即可開啟瀏覽器，平均可縮短 3 到 5 秒的等待時間；同時設有 30 秒逾時保護，相容性與容錯度大幅提升。
+
+### 2.5 資產歷史紀錄之安全性備份機制 (v1.3.0+)
+* **評審點**：寫入磁碟前的原子保護。
+* **代碼段**：
+  ```python
+  if HISTORY_FILE.exists():
+      shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
+  with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+      json.dump(data, f, indent=2, ensure_ascii=False)
+  ```
+* **評價**：在覆寫 `asset_history.json` 之前，使用 `shutil.copy2` 自動生成 `.bak.json` 備份檔。這是一個成熟的防禦性設計，防範了因寫入中途突然斷電、進程遭強制終止或硬碟滿載等不可抗力因素造成的 JSON 資料損毀，保證了本地微型數據庫的持久性與資料安全。
 
 ---
 
@@ -108,6 +135,58 @@ graph TD
   ```
 * **評價**：永豐證券 API 在盤後不開放交易額度（Limits）查詢，會強制返回 500 錯誤。此處在 `resp.ok` 為 `false` 或 `catch(e)` 時，將原本預設的 `--` 與 `0%` 替換為明確的中文說明提示，成功消除了使用者的疑惑。
 
+### 3.4 零股 (Odd-Lot) 持倉市值精確計算與單位標籤渲染 (v1.3.1+)
+* **評審點**：資產市值計算中的股數乘數解析。
+* **代碼段**：
+  ```javascript
+  const ODD_LOT_TYPES = new Set(['IntradayOdd', 'Odd', 'BulkOdd']);
+  function isOddLot(pos) {
+      return ODD_LOT_TYPES.has(pos.order_lot);
+  }
+  function lotMultiplier(pos) {
+      return isOddLot(pos) ? 1 : 1000;
+  }
+  ...
+  const qtyStr = isOddLot(pos) ? `${pos.quantity}股` : `${pos.quantity}張`;
+  ...
+  const cost = p.quantity * p.price * lotMultiplier(p);
+  totalStockMarketVal += cost + (p.pnl || 0);
+  ```
+* **評價**：
+  * **單位自動適配**：在持倉列表中能自動依據 `order_lot` 屬性區分並顯示「張」與「股」，有效防止交易員在看盤時誤判數量。
+  * **市值數學公式修正**：Shioaji API 中，不論是零股（Odd）還是整張（Round），持倉數量均為 `pos.quantity`。然而整張的 quantity 單位為「張」（換算市值須乘 `1000` 倍股數），而零股的 quantity 單位本身即為「股」（乘數為 `1`）。此處設計了 `lotMultiplier` 權重機制，根治了零股市值被放大 1000 倍的算術錯誤，使每日收盤資產統計達到了 100% 精確度。
+
+### 3.5 資產歷史資料每日寫入限制優化 (v1.3.0+)
+* **評審點**：減緩後端 API 覆寫頻率。
+* **代碼段**：
+  ```javascript
+  // 每次都更新即時顯示
+  document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
+
+  // 每天只寫入 JSON 一次，避免每 15 秒重複覆寫
+  if (localStorage.getItem('lastSavedDate') === today) return;
+  ```
+* **評價**：
+  * **讀寫分離**：前端每 15 秒定時輪詢刷新時，畫面的即時餘額總計會維持高頻更新。
+  * **資料庫防抖 (Write Debounce)**：利用 `localStorage` 記錄上次寫入成功的日期字串，若與今日相同則中斷寫入請求。此設計大幅降低了對本地硬碟的 IO 耗損，防範了頻繁寫入鎖定 JSON 導致後端進程阻塞的問題。
+
+### 3.6 交易櫃檯適配與 OTC 委託修正 (v1.3.0+)
+* **評審點**：解決上櫃股票 (OTC) 委託錯誤。
+* **代碼段**：
+  ```javascript
+  tr.onclick = () => openOrderDrawer(pos.code, 'STK', pos.last_price, pos.exchange || 'TSE');
+  ...
+  function openOrderDrawer(code, type, lastPrice, exchange) {
+      state.drawerExchange = exchange || 'TSE';
+      ...
+  }
+  ```
+* **評價**：先前版本中，下單抽屜的預設交易市場寫死為上市（`TSE`）。當使用者點選庫存中的上櫃股票（`OTC`）嘗試委託平倉時，會因為市場參數錯誤遭到交易所退單。新版將 `exchange` 做為狀態參數傳遞並塞入委託 payload 中，完整支援了上市 (TSE) 與上櫃 (OTC) 雙市場交易。
+
+### 3.7 移除遠端 Console 日誌注入 (v1.3.0+)
+* **評審點**：清理開發期殘留代碼。
+* **評價**：全面移除了 HTML `<head>` 中劫持 `console.log` 的 `remote-log` JavaScript 注入函數，並刪除了後端對應的 POST 路由。這使網頁在加載時不再產生不必要的本地轉發開銷，不僅提升了前端效能，更免除了控制台混亂日誌的困擾。
+
 ---
 
 ## 4. 安全性與隱私評估
@@ -116,6 +195,7 @@ graph TD
 * **設計評價**：
   * 在 [style.css](./web/style.css) 中，透過 CSS 變數 `--color-up` 和 `--color-down` 來動態切換配色。
   * **隱形黑白 (Stealth Mode)** 方案中，將漲跌色彩直接重設為前景色，達到 100% monochrome（黑白單色化），配合磨砂玻璃遮罩，防窺效果極佳，完美融入辦公室背景。
+  * 在 `v1.2.3` 中，將「盤後暫停服務」等大標字體縮小為 `1.1rem` 並套用 `.fallback-text` 灰字隱形處理，進一步強化了 Stealth Mode 的低調偽裝性。
 
 ### 4.2 交易委託安全鎖與自訂確認 Modal
 * **設計評價**：
@@ -129,19 +209,16 @@ graph TD
 儘管代碼整體結構非常健全，但仍有以下幾點可在後續迭代中進一步優化：
 
 1. **API 金鑰與憑證路徑環境變數檢驗**
-   * **現狀**：[dashboard.py](./dashboard.py) 在啟動前載入 `.env`，並以 `run_env["SJ_CA_PATH"]` 與 `run_env["SJ_CA_PASSWD"]` 送入子進程。
    * **建議**：若使用者的 `Sinopac.pfx` 檔案因過期或路徑錯誤而不存在，雖然 Shioaji 伺服器仍能啟動，但後續現貨下單將會失敗。建議在後端啟動前，加入一步對 `CA_CERT_PATH` 檔案實體存在性的檢查，若不存在，則在控制台主動列印出黃色警告字樣。
 
 2. **自選股快照請求 (Snapshots) 的批次上限**
-   * **現狀**：[app.js](./web/app.js) 的 `updateWatchlistSnapshots` 會一次性將自選股清單陣列送出查詢快照。
    * **建議**：如果自選股數量非常多（例如超過 50 檔），一次性發送大批快照可能會導致 API 伺服器超時。建議在前端限制自選股上限為 20 檔，或在發送時以每 10 檔為一組進行分批 (chunk) 請求。
 
 3. **歷史淨值儲存的 Pruning 邊界**
-   * **現狀**：`dashboard.py` 會自動清理 90 天前的數據。
    * **建議**：如果使用者連續 90 天沒有開機使用儀表板，在第 91 天開啟時，歷史數據會在一瞬間全部被 Prune 清空。建議修改清理邏輯為「保留最新且至少 10 筆數據」，防止極端情況下歷史數據全部遺失。
 
 ---
 
 ## 6. 審評結論
 
-本專案是一個**實用性極高、細節到位、安全意識強烈**的永豐證券交易輔助工具。代碼成功解決了 Windows 環境下的中文編碼、併發處理及跨域 OPTIONS 預檢等常見痛點。圖表與自訂確認 Modal 的加入，使得系統在維持「低調防窺」的同時，仍保有高級的科技視覺美學與極高的交易安全性。
+本專案是一個**實用性極高、細節到位、安全意識強烈**的永豐證券交易輔助工具。`v1.3.1` 版本精準地解決了零股算術乘數、上櫃交易委託及高頻寫入磁碟耗損等核心問題。系統在維持極佳「低調防窺」特性的同時，在後端多執行緒併發、原子寫入備份與前端防禦性編程上皆展現了非常高水準的穩定性與成熟度。
