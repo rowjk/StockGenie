@@ -23,6 +23,7 @@ let state = {
     sseConnection: null,
     drawerExchange: 'TSE',
     idleTimer: null,
+    stockPositionUnit: 'Lot', // 'Share' 表示 API 已回傳股數（含零股）
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
@@ -369,7 +370,7 @@ async function fetchData() {
             document.getElementById('limit-progress').style.width = '0%';
         }
         
-        // 3. 取得股票庫存
+        // 3. 取得股票庫存（unit: 1 = Unit.Share，回傳股數含零股）
         try {
             const resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
                 method: 'POST',
@@ -378,11 +379,13 @@ async function fetchData() {
                     account_type: 'S',
                     broker_id: stockAcc.broker_id,
                     account_id: stockAcc.account_id,
-                    person_id: stockAcc.person_id
+                    person_id: stockAcc.person_id,
+                    unit: 1  // Unit.Share：所有部位統一換算為股，含零股
                 })
             });
             if (resp.ok) {
                 state.stockPositions = await resp.json();
+                state.stockPositionUnit = 'Share';
                 renderStockPositions();
             }
         } catch (e) {
@@ -491,8 +494,11 @@ function renderStockPositions() {
         const pnlRateVal = pos.pnl_rate !== undefined ? pos.pnl_rate : (pos.price > 0 ? ((pos.last_price - pos.price) / pos.price) * 100 : 0);
         const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${pnlRateVal.toFixed(2)}%`;
         const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
-        // 統一以「股」顯示：整張 quantity 單位為張，需 ×1000 換算
-        const qtyStr = `${(pos.quantity * lotMultiplier(pos)).toLocaleString()}股`;
+        // unit=Share 時 quantity 已是股數（含零股）；Lot 時需 ×1000
+        const qtyShares = state.stockPositionUnit === 'Share'
+            ? pos.quantity
+            : pos.quantity * lotMultiplier(pos);
+        const qtyStr = `${qtyShares.toLocaleString()}股`;
 
         tr.innerHTML = `
             <td class="mono" style="font-weight: 600; color: var(--color-accent);">${pos.code}</td>
@@ -1132,12 +1138,15 @@ async function saveDailyAssetTotal() {
     if (state.balance === 0 && state.stockPositions.length === 0) return;
     
     // 計算證券持股總市值
-    // 整張：quantity 單位為「張」，需 ×1000 換算為股再乘均價
-    // 零股：quantity 單位本身即為「股」，乘數為 1
+    // unit=Share：quantity 已是總股數（含零股），直接乘均價
+    // unit=Lot：quantity 為張數，需 ×lotMultiplier 換算為股
     let totalStockMarketVal = 0;
     state.stockPositions.forEach(p => {
-        const cost = p.quantity * p.price * lotMultiplier(p);
-        totalStockMarketVal += cost + (p.pnl || 0); // 成本加損益 = 當前市值
+        const shares = state.stockPositionUnit === 'Share'
+            ? p.quantity
+            : p.quantity * lotMultiplier(p);
+        const cost = shares * p.price;
+        totalStockMarketVal += cost + (p.pnl || 0); // 成本 + 損益 = 當前市值
     });
     
     const futuresBalance = state.margin ? state.margin.today_balance : 0;
