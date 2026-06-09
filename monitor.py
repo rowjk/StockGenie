@@ -158,7 +158,14 @@ def main():
         print(f"⚠ 憑證啟用失敗：{e}")
 
     print("⏳ 等待 session 建立...")
-    time.sleep(8)
+    for _ in range(30):
+        try:
+            api.account_balance()
+            break
+        except Exception:
+            time.sleep(1)
+    else:
+        print("⚠ Session 建立逾時，繼續嘗試查詢...")
 
     try:
         if args.interval > 0:

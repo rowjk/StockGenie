@@ -2,37 +2,6 @@
 <html lang="zh-TW" data-theme="dark" data-scheme="slate">
 <head>
     <meta charset="UTF-8">
-    <script>
-        (function() {
-            const _log = console.log;
-            const _error = console.error;
-            const _warn = console.warn;
-            function send(type, args) {
-                const msg = Array.from(args).map(x => {
-                    try {
-                        if (x instanceof Error) {
-                            return x.name + ': ' + x.message + '\n' + x.stack;
-                        }
-                        return typeof x === 'object' ? JSON.stringify(x) : String(x);
-                    } catch(e) { return String(x); }
-                }).join(' ');
-                fetch('http://127.0.0.1:8081/api/remote-log', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: type, message: msg })
-                }).catch(()=>{});
-            }
-            console.log = function() { _log.apply(console, arguments); send('log', arguments); };
-            console.error = function() { _error.apply(console, arguments); send('error', arguments); };
-            console.warn = function() { _warn.apply(console, arguments); send('warn', arguments); };
-            window.onerror = function(message, source, lineno, colno, error) {
-                send('exception', [`${message} at ${source}:${lineno}:${colno}`, error]);
-            };
-            window.onunhandledrejection = function(event) {
-                send('unhandledrejection', [event.reason]);
-            };
-        })();
-    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SinoPac Genie</title>
     <link rel="stylesheet" href="style.css">

@@ -21,6 +21,7 @@ let state = {
     refreshInterval: 15000,
     pollingTimer: null,
     sseConnection: null,
+    drawerExchange: 'TSE',
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
@@ -481,7 +482,7 @@ function renderStockPositions() {
     
     state.stockPositions.forEach(pos => {
         const tr = document.createElement('tr');
-        tr.onclick = () => openOrderDrawer(pos.code, 'STK', pos.last_price);
+        tr.onclick = () => openOrderDrawer(pos.code, 'STK', pos.last_price, pos.exchange || 'TSE');
         
         const pnl = pos.pnl || 0;
         const pnlClass = pnl >= 0 ? 'val-up' : 'val-down';
@@ -1002,7 +1003,7 @@ async function initDrawerControls() {
         const payload = {
             contract: {
                 security_type: 'STK',
-                exchange: 'TSE',
+                exchange: state.drawerExchange,
                 code: code
             },
             stock_order: {
@@ -1048,12 +1049,14 @@ async function initDrawerControls() {
     };
 }
 
-function openOrderDrawer(code, type, lastPrice) {
+function openOrderDrawer(code, type, lastPrice, exchange) {
     if (type !== 'STK') {
         alert("目前介面暫不支援期貨線上委託交易。");
         return;
     }
-    
+
+    state.drawerExchange = exchange || 'TSE';
+
     // 初始化安全鎖
     document.getElementById('drawer-lock-overlay').classList.add('active');
     
@@ -1117,7 +1120,10 @@ async function saveDailyAssetTotal() {
     const totalAssets = state.balance + totalStockMarketVal + futuresBalance;
     
     const today = new Date().toISOString().split('T')[0];
-    
+
+    // 每天只寫入一次，避免每 15 秒重複覆寫
+    if (localStorage.getItem('lastSavedDate') === today) return;
+
     // 更新資產總覽文字
     document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
     
@@ -1130,7 +1136,8 @@ async function saveDailyAssetTotal() {
         if (resp.ok) {
             const updated = await resp.json();
             state.assetHistory = updated;
-            
+            localStorage.setItem('lastSavedDate', today);
+
             if (state.activeView === 'dashboard') {
                 renderAssetChart();
             }
