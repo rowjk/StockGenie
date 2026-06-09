@@ -42,6 +42,33 @@
 ## ⚠️ 系統開發與版本更動守則
 
 為了落實專案的追蹤與管理，本專案特別制定以下規範：
-* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.3.1`）。請在修改完成後，主動更新：
+* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.3.16`）。請在修改完成後，主動更新：
   1. [index.html](./web/index.html) 的頁尾 Footer 版本標籤。
   2. 本 [README.md](./README.md) 的版本表記與指引說明。
+
+---
+
+## 📋 版本更新紀錄
+
+### v1.3.16 (2026-06-09)
+**Bug 修正**
+- `drawCanvasLoading` 函數宣告遺失 → 整個 `app.js` 語法錯誤，JS 完全無法執行（伺服器顯示離線）
+- `renderDetailTickChart` 畫圖前未呼叫 `clearRect` → 「載入中...」文字與折線圖疊加殘留
+- 自選股「昨日參考價」顯示 `--`：snapshot API 不回傳此欄位，改為在點選股票時從 `/data/contracts/{code}` 補抓並快取至 `item.reference`
+- 自選監控清單排版歪斜：`watchlist-info` 缺少 `flex:1`，導致各列 sparkline 和價格欄位位置不齊
+
+**效能優化**
+- 新增 `fetchKbarsWithCache(code)`：`loadMAStats` 與 `renderDetailMAChart` 共用同一份 2 年 kbars 快取（1 小時有效），避免每次點選股票重複發送大量歷史資料請求
+- `checkServerStatus` 輪詢間隔 10 秒 → 60 秒（每小時減少 300 次 `/auth/usage` 呼叫）
+- 新增 `isTradingHours()`：盤後（09:00–13:35 以外）自動跳過 `trading_limits` API（盤後永遠回傳 500）
+- 新增 `_fetchCount` 降頻計數器：`account_balance`、`position_unit`、`settlements`、`margin` 改為每 4 次 snapshot 週期執行一次（約 60 秒），snapshot 快照仍維持原頻率確保即時報價
+
+**快取機制說明**
+| 資料 | 快取策略 |
+|------|----------|
+| kbars（2 年日線） | session 內快取 1 小時，多處共用 |
+| 昨日參考價 | 快取至 watchlist item，重新整理前不重複抓取 |
+| Snapshot 快照 | 不快取，每次 fetchData 均更新 |
+
+### v1.3.x 之前
+詳見 `app.js` 檔頭版本歷史與 `task.md` 任務清單。
