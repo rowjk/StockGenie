@@ -491,7 +491,8 @@ function renderStockPositions() {
         const pnlRateVal = pos.pnl_rate !== undefined ? pos.pnl_rate : (pos.price > 0 ? ((pos.last_price - pos.price) / pos.price) * 100 : 0);
         const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${pnlRateVal.toFixed(2)}%`;
         const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
-        const qtyStr = isOddLot(pos) ? `${pos.quantity}股` : `${pos.quantity}張`;
+        // 統一以「股」顯示：整張 quantity 單位為張，需 ×1000 換算
+        const qtyStr = `${(pos.quantity * lotMultiplier(pos)).toLocaleString()}股`;
 
         tr.innerHTML = `
             <td class="mono" style="font-weight: 600; color: var(--color-accent);">${pos.code}</td>
