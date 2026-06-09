@@ -19,7 +19,7 @@
   * **科技藍調 (Slate Mode)**（預設）：溫和的靛藍與暖灰，外觀極像 AWS 或 Jira 流量監控。
   * **隱形黑白 (Stealth Mode)**：完全不使用任何紅綠或藍色色彩，最適合防窺。
   * **柔和傳統 (Muted Color)**：低對比度的柔和粉紅與粉綠，保留基本漲跌視覺反饋。
-* [web/app.js](./web/app.js)：前端應用邏輯。處理帳號載入、定時輪詢餘額與庫存、localStorage 自選監控與 Canvas 微型走勢圖繪製。此外，亦處理即時 SSE 委託成交日誌提示（Toast）以及 100% 繁體中文的交易單安全確認視窗。同時，已在下單（`place_order`）的 payload 結構中補上 `person_id`（身分證字號）欄位，徹底解決因缺少該參數可能導致 Shioaji API 伺服器回傳 500 交易失敗的問題。**v1.3.0 新增**：下單 payload 的 `exchange` 欄位改從持倉資料動態帶入（支援上市 TSE / 上櫃 OTC 股票），取代原本寫死 `'TSE'` 的錯誤邏輯；每日資產紀錄改為當日首次成功寫入後即停止，避免每 15 秒重複覆寫 JSON 浪費 I/O。
+* [web/app.js](./web/app.js)：前端應用邏輯。處理帳號載入、定時輪詢餘額與庫存、localStorage 自選監控與 Canvas 微型走勢圖繪製。此外，亦處理即時 SSE 委託成交日誌提示（Toast）以及 100% 繁體中文的交易單安全確認視窗。同時，已在下單（`place_order`）的 payload 結構中補上 `person_id`（身分證字號）欄位，徹底解決因缺少該參數可能導致 Shioaji API 伺服器回傳 500 交易失敗的問題。**v1.3.0 新增**：下單 payload 的 `exchange` 欄位改從持倉資料動態帶入（支援上市 TSE / 上櫃 OTC 股票），取代原本寫死 `'TSE'` 的錯誤邏輯；每日資產紀錄改為當日首次成功寫入後即停止，避免每 15 秒重複覆寫 JSON 浪費 I/O；修正零股持倉市值計算：新增 `isOddLot()` / `lotMultiplier()` helper，根據 `order_lot` 欄位（`IntradayOdd` / `Odd` / `BulkOdd`）判斷數量單位，零股不再錯誤乘以 1000；持倉表格數量欄位同步顯示單位（`張` / `股`）。
 
 ---
 

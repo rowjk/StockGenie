@@ -1111,10 +1111,12 @@ async function saveDailyAssetTotal() {
     if (state.balance === 0 && state.stockPositions.length === 0) return;
     
     // 計算證券持股總市值
+    // 整張：quantity 單位為「張」，需 ×1000 換算為股再乘均價
+    // 零股：quantity 單位本身即為「股」，乘數為 1
     let totalStockMarketVal = 0;
     state.stockPositions.forEach(p => {
         const cost = p.quantity * p.price * lotMultiplier(p);
-        totalStockMarketVal += cost + (p.pnl || 0);
+        totalStockMarketVal += cost + (p.pnl || 0); // 成本加損益 = 當前市值
     });
     
     const futuresBalance = state.margin ? state.margin.today_balance : 0;
