@@ -371,8 +371,8 @@ async function fetchData() {
         }
         
         // 3. 取得股票庫存
-        // 優先嘗試 unit=1（Unit.Share），讓 Shioaji 回傳總股數含零股
-        // 若 endpoint 不支援 unit 參數則 fallback 至預設（張數模式）
+        // 依序嘗試：unit=1 (int) → unit="Share" (string) → 無 unit (Lot 模式)
+        // 開啟瀏覽器 Console 可看到詳細錯誤，有助診斷版本相容性問題
         try {
             const basePayload = {
                 account_type: 'S',
@@ -381,35 +381,46 @@ async function fetchData() {
                 person_id: stockAcc.person_id,
             };
 
-            let resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
+            const tryFetch = (extraBody) => fetch(`${API_BASE}/portfolio/position_unit`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...basePayload, unit: 1 }) // Unit.Share：含零股
+                body: JSON.stringify({ ...basePayload, ...extraBody })
             });
 
+            // 嘗試 1：unit=1 (整數)
+            let resp = await tryFetch({ unit: 1 });
+
             if (!resp.ok) {
-                // unit=1 不被支援，fallback 至不帶 unit（預設張數模式）
-                console.warn('position_unit unit=1 不支援，改用預設張數模式');
-                resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(basePayload)
-                });
+                const errBody = await resp.text().catch(() => '');
+                console.warn(`[庫存] unit=1 失敗 HTTP${resp.status}: ${errBody}`);
+
+                // 嘗試 2：unit="Share" (字串)
+                resp = await tryFetch({ unit: 'Share' });
+            }
+
+            if (!resp.ok) {
+                const errBody = await resp.text().catch(() => '');
+                console.warn(`[庫存] unit="Share" 失敗 HTTP${resp.status}: ${errBody}`);
+
+                // 嘗試 3：不帶 unit（Lot 模式，只有整張）
+                resp = await tryFetch({});
                 if (resp.ok) {
                     state.stockPositions = await resp.json();
                     state.stockPositionUnit = 'Lot';
-                    renderStockPositions();
+                    console.info('[庫存] 使用 Lot 模式（僅整張）');
                 } else {
-                    renderStockPositions(); // 顯示空白狀態而非永久讀取中
+                    console.error('[庫存] 所有模式均失敗');
                 }
             } else {
                 state.stockPositions = await resp.json();
                 state.stockPositionUnit = 'Share';
-                renderStockPositions();
+                console.info('[庫存] 使用 Share 模式（含零股）');
             }
+
+            renderStockPositions();
         } catch (e) {
             console.error("獲取股票庫存失敗", e);
-            renderStockPositions(); // 顯示空白狀態
+            renderStockPositions();
         }
  
         // 4. 取得近三日交割款
