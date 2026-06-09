@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDrawerControls();
     initHistoryControls();
     initIdleTimeout();
+    initQuickOrder();
 
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
@@ -779,8 +780,15 @@ function renderWatchlist() {
                 <span class="watchlist-price">${priceStr}</span>
                 <span class="${rateClass}">${rateStr}</span>
             </div>
+            <button class="watchlist-order-btn" title="開啟下單面板">下單</button>
         `;
         container.appendChild(div);
+
+        // 下單按鈕：不觸發 selectWatchlistItem
+        div.querySelector('.watchlist-order-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openOrderDrawer(item.code, 'STK', item.close || 0, item.exchange || 'TSE');
+        });
         
         // 繪製微型走勢圖
         const canvas = document.getElementById(`spark-${item.code}`);
@@ -1432,6 +1440,50 @@ function initIdleTimeout() {
     // 啟動計時與倒數顯示
     resetIdleTimer();
     startCountdownDisplay();
+}
+
+// ── 快速下單輸入框 ────────────────────────────────────────────────────────
+function initQuickOrder() {
+    const input = document.getElementById('quick-order-input');
+    const btn = document.getElementById('btn-quick-order');
+
+    const doQuickOrder = async () => {
+        const code = input.value.trim().toUpperCase();
+        if (!code) return;
+
+        // 1. 查自選股快取
+        const wItem = state.watchlist.find(w => w.code === code);
+        if (wItem) {
+            openOrderDrawer(code, 'STK', wItem.close || 0, wItem.exchange || 'TSE');
+            input.value = '';
+            return;
+        }
+
+        // 2. 查持倉快取
+        const pos = state.stockPositions.find(p => p.code === code);
+        if (pos) {
+            openOrderDrawer(code, 'STK', pos.last_price || 0, pos.exchange || 'TSE');
+            input.value = '';
+            return;
+        }
+
+        // 3. 打 contracts API
+        try {
+            const resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
+            if (resp.ok) {
+                const contract = await resp.json();
+                openOrderDrawer(contract.code, 'STK', contract.reference || 0, contract.exchange || 'TSE');
+                input.value = '';
+            } else {
+                alert(`找不到股票代號 ${code}`);
+            }
+        } catch (e) {
+            console.error('快速下單查詢失敗', e);
+        }
+    };
+
+    btn.addEventListener('click', doQuickOrder);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') doQuickOrder(); });
 }
 
 // ── 持倉名稱補查 ─────────────────────────────────────────────────────────
