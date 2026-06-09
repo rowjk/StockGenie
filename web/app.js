@@ -338,7 +338,9 @@ async function fetchData() {
                 const limit = await resp.json();
                 state.limit = limit;
                 
-                document.getElementById('limit-available').textContent = formatCurrency(limit.trading_available);
+                const limitEl = document.getElementById('limit-available');
+                limitEl.textContent = formatCurrency(limit.trading_available);
+                limitEl.classList.remove('fallback-text');
                 const used = limit.trading_used;
                 const total = limit.trading_limit;
                 const pct = total > 0 ? ((used / total) * 100).toFixed(0) : 0;
@@ -347,14 +349,18 @@ async function fetchData() {
                 document.getElementById('limit-summary').textContent = `已用: ${formatCurrency(used)} / 總額: ${formatCurrency(total)}`;
                 document.getElementById('limit-progress').style.width = `${pct}%`;
             } else {
-                document.getElementById('limit-available').textContent = '盤後暫停服務';
+                const limitEl = document.getElementById('limit-available');
+                limitEl.textContent = '盤後暫停服務';
+                limitEl.classList.add('fallback-text');
                 document.getElementById('limit-summary').textContent = '（非交易時段永豐 API 不開放查詢交易額度）';
                 document.getElementById('limit-pct').textContent = '0%';
                 document.getElementById('limit-progress').style.width = '0%';
             }
         } catch (e) {
             console.error("獲取交易額度失敗", e);
-            document.getElementById('limit-available').textContent = '盤後暫停服務';
+            const limitEl = document.getElementById('limit-available');
+            limitEl.textContent = '盤後暫停服務';
+            limitEl.classList.add('fallback-text');
             document.getElementById('limit-summary').textContent = '（非交易時段永豐 API 不開放查詢交易額度）';
             document.getElementById('limit-pct').textContent = '0%';
             document.getElementById('limit-progress').style.width = '0%';

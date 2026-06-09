@@ -453,6 +453,13 @@ a {
     margin-bottom: 8px;
 }
 
+.metric-value.fallback-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+}
+
 .metric-subtitle {
     font-size: 0.8rem;
     color: var(--text-muted);
