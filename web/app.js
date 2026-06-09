@@ -921,13 +921,25 @@ function updateDetailView(code) {
     };
 }
 
-async function renderDetailTickChart(code) {
-    const canvas = document.getElementById('detail-tick-chart');
+function drawCanvasLoading(canvas, msg = '載入中...') {
     const ctx = canvas.getContext('2d');
     const w = canvas.width = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
-    
     ctx.clearRect(0, 0, w, h);
+    ctx.font = '13px var(--font-sans)';
+    ctx.fillStyle = 'var(--text-muted, #64748b)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(msg, w / 2, h / 2);
+    return { ctx, w, h };
+}
+
+async function renderDetailTickChart(code) {
+    const canvas = document.getElementById('detail-tick-chart');
+    drawCanvasLoading(canvas);
+    const ctx = canvas.getContext('2d');
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
     
     const today = new Date().toISOString().split('T')[0];
     
@@ -995,11 +1007,11 @@ async function renderDetailTickChart(code) {
 async function renderDetailMAChart(code) {
     const canvas = document.getElementById('detail-ma-chart');
     const legendEl = document.getElementById('detail-ma-legend');
+    drawCanvasLoading(canvas, '正在載入均線資料...');
+    legendEl.innerHTML = '';
     const ctx = canvas.getContext('2d');
-    const w = canvas.width = canvas.clientWidth;
-    const h = canvas.height = canvas.clientHeight;
-    ctx.clearRect(0, 0, w, h);
-    legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">載入中...</span>';
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
 
     const item = state.watchlist.find(wi => wi.code === code);
     const exchange = item ? (item.exchange || 'TSE') : 'TSE';
@@ -1022,6 +1034,9 @@ async function renderDetailMAChart(code) {
         });
         if (!resp.ok) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">無法取得歷史資料</span>'; return; }
 
+        // 重新取得畫布尺寸（fetch 期間可能被重繪過）
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
         const data = await resp.json();
         const allCloses = (data.Close || data.close || []).map(Number);
         if (allCloses.length < 5) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">資料不足</span>'; return; }
