@@ -687,7 +687,7 @@ async function updateWatchlistSnapshots() {
             snapshots.forEach(snap => {
                 const item = state.watchlist.find(w => w.code === snap.code);
                 if (item) {
-                    item.name = snap.name;
+                    if (snap.name) item.name = snap.name; // 只在 snapshot 有名稱時更新，避免覆蓋掉已從 contracts 查到的名稱
                     item.close = snap.close;
                     item.change_rate = snap.change_rate;
                     item.change_price = snap.change_price;
