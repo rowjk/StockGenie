@@ -371,6 +371,36 @@ a {
     opacity: 1;
 }
 
+/* ── 自選股明細圖表 Tab ── */
+.detail-chart-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.detail-tab {
+    padding: 4px 14px;
+    border-radius: 5px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.detail-tab.active,
+.detail-tab:hover {
+    background: var(--color-accent);
+    color: #fff;
+    border-color: var(--color-accent);
+}
+.ma-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+    padding: 0 2px;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;

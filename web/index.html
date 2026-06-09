@@ -317,8 +317,21 @@
                                     <div>今日成交量: <span id="detail-volume" style="font-weight:600;">--</span></div>
                                 </div>
                                 <hr style="border: 0; border-top: 1px solid var(--border-color);">
-                                <div class="trend-canvas-container" style="height: 150px;">
+                                <!-- 圖表模式切換 -->
+                                <div class="detail-chart-tabs">
+                                    <button class="detail-tab active" data-tab="tick">分時走勢</button>
+                                    <button class="detail-tab" data-tab="ma">均線走勢</button>
+                                </div>
+                                <!-- 分時走勢圖 -->
+                                <div id="detail-tick-panel" class="trend-canvas-container" style="height: 150px;">
                                     <canvas id="detail-tick-chart"></canvas>
+                                </div>
+                                <!-- 均線走勢圖 -->
+                                <div id="detail-ma-panel" style="display:none;">
+                                    <div class="trend-canvas-container" style="height: 150px;">
+                                        <canvas id="detail-ma-chart"></canvas>
+                                    </div>
+                                    <div id="detail-ma-legend" class="ma-legend"></div>
                                 </div>
                             </div>
                         </div>

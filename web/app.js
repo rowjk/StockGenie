@@ -695,6 +695,22 @@ function initWatchlistControls() {
             document.getElementById('btn-add-watchlist').click();
         }
     });
+
+    // 分時 / 均線 Tab 切換
+    document.querySelectorAll('.detail-tab').forEach(tab => {
+        tab.addEventListener('click', async () => {
+            document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            const tabName = tab.getAttribute('data-tab');
+            document.getElementById('detail-tick-panel').style.display = tabName === 'tick' ? '' : 'none';
+            document.getElementById('detail-ma-panel').style.display   = tabName === 'ma'   ? '' : 'none';
+            const code = document.getElementById('detail-code').textContent;
+            if (code && code !== '----') {
+                if (tabName === 'tick') await renderDetailTickChart(code);
+                else await renderDetailMAChart(code);
+            }
+        });
+    });
 }
 
 async function updateWatchlistSnapshots() {
@@ -844,14 +860,17 @@ async function selectWatchlistItem(code) {
     const card = document.getElementById('watchlist-detail-card');
     card.style.opacity = '1';
     card.style.pointerEvents = 'auto';
-    
+
     document.getElementById('btn-remove-watchlist').style.display = 'block';
-    
+
     // 更新細節面板文字
     updateDetailView(code);
-    
-    // 繪製細節 Ticks 曲線圖
-    await renderDetailTickChart(code);
+
+    // 依目前選取的 tab 決定渲染哪張圖
+    const activeTab = document.querySelector('.detail-tab.active');
+    const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'tick';
+    if (tabName === 'ma') await renderDetailMAChart(code);
+    else await renderDetailTickChart(code);
 }
 
 function updateDetailView(code) {
@@ -967,6 +986,112 @@ async function renderDetailTickChart(code) {
         }
     } catch (e) {
         console.error("獲取即時 Ticks 圖表失敗", e);
+    }
+}
+
+async function renderDetailMAChart(code) {
+    const canvas = document.getElementById('detail-ma-chart');
+    const legendEl = document.getElementById('detail-ma-legend');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.clientWidth;
+    const h = canvas.height = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">載入中...</span>';
+
+    const item = state.watchlist.find(wi => wi.code === code);
+    const exchange = item ? (item.exchange || 'TSE') : 'TSE';
+
+    // 抓近 2 年日線，確保 240MA 有足夠計算資料
+    const end = new Date().toISOString().split('T')[0];
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 2);
+    const start = startDate.toISOString().split('T')[0];
+
+    try {
+        const resp = await fetch(`${API_BASE}/data/kbars`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contract: { security_type: 'STK', exchange, code },
+                start, end,
+                frequency: '1D'
+            })
+        });
+        if (!resp.ok) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">無法取得歷史資料</span>'; return; }
+
+        const data = await resp.json();
+        const allCloses = (data.Close || data.close || []).map(Number);
+        if (allCloses.length < 5) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">資料不足</span>'; return; }
+
+        // 計算 MA，不足 period 的位置回傳 null
+        const calcMA = (arr, period) => arr.map((_, i) =>
+            i < period - 1 ? null : arr.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period
+        );
+
+        const MA_DEFS = [
+            { period: 5,   label: '周線 MA5',   color: '#3b82f6' },
+            { period: 20,  label: '月線 MA20',  color: '#f59e0b' },
+            { period: 60,  label: '季線 MA60',  color: '#10b981' },
+            { period: 240, label: '年線 MA240', color: '#e11d48' },
+        ];
+        const maLines = MA_DEFS.map(d => ({ ...d, values: calcMA(allCloses, d.period) }));
+
+        // 顯示最近 1 年 (~252 個交易日)
+        const displayN = Math.min(allCloses.length, 252);
+        const offset = allCloses.length - displayN;
+        const closes = allCloses.slice(offset);
+        const mas = maLines.map(ma => ({ ...ma, values: ma.values.slice(offset) }));
+
+        // Y 軸範圍
+        const allVals = [
+            ...closes,
+            ...mas.flatMap(ma => ma.values.filter(v => v !== null))
+        ];
+        const minY = Math.min(...allVals) * 0.997;
+        const maxY = Math.max(...allVals) * 1.003;
+        const rangeY = maxY - minY || 1;
+
+        const toX = i => (i / (displayN - 1)) * (w - 10) + 5;
+        const toY = v => h - 20 - ((v - minY) / rangeY) * (h - 28);
+
+        const theme = document.documentElement.getAttribute('data-theme');
+
+        // 收盤價細線（底層，灰色）
+        ctx.beginPath();
+        ctx.strokeStyle = theme === 'dark' ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.35)';
+        ctx.lineWidth = 1;
+        closes.forEach((v, i) => { if (i === 0) ctx.moveTo(toX(i), toY(v)); else ctx.lineTo(toX(i), toY(v)); });
+        ctx.stroke();
+
+        // 四條 MA 線
+        mas.forEach(ma => {
+            ctx.beginPath();
+            ctx.strokeStyle = ma.color;
+            ctx.lineWidth = 1.6;
+            let started = false;
+            ma.values.forEach((v, i) => {
+                if (v === null) { started = false; return; }
+                if (!started) { ctx.moveTo(toX(i), toY(v)); started = true; }
+                else ctx.lineTo(toX(i), toY(v));
+            });
+            ctx.stroke();
+        });
+
+        // 最高/最低標籤
+        ctx.font = '10px var(--font-mono)';
+        ctx.fillStyle = theme === 'dark' ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.8)';
+        ctx.textAlign = 'right';
+        ctx.fillText(`高 ${Math.max(...closes).toFixed(2)}`, w - 5, 14);
+        ctx.fillText(`低 ${Math.min(...closes).toFixed(2)}`, w - 5, h - 6);
+
+        // 圖例
+        legendEl.innerHTML = MA_DEFS.map(d =>
+            `<span style="color:${d.color};font-size:0.72rem;font-family:var(--font-mono);">─ ${d.label}</span>`
+        ).join('');
+
+    } catch (e) {
+        console.error('獲取均線資料失敗', e);
+        legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">載入失敗</span>';
     }
 }
 
