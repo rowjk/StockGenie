@@ -1121,11 +1121,11 @@ async function saveDailyAssetTotal() {
     
     const today = new Date().toISOString().split('T')[0];
 
-    // 每天只寫入一次，避免每 15 秒重複覆寫
-    if (localStorage.getItem('lastSavedDate') === today) return;
-
-    // 更新資產總覽文字
+    // 每次都更新即時顯示
     document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
+
+    // 每天只寫入 JSON 一次，避免每 15 秒重複覆寫
+    if (localStorage.getItem('lastSavedDate') === today) return;
     
     try {
         const resp = await fetch(`${LOCAL_API_BASE}/asset-history`, {
