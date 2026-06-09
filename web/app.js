@@ -2,6 +2,8 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.17 (2026-06-09)
+   - [安全性] 新增唯讀 API 金鑰安全攔截，並在前端/後端雙重檢查，無權限時顯示「下單權限關閉」
    v1.3.16 (2026-06-09)
    - [修正] drawCanvasLoading 函數宣告遺失造成整個 JS 語法錯誤
    - [修正] renderDetailTickChart 畫圖前未 clearRect，導致「載入中...」殘留
