@@ -239,6 +239,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _write_history(self, data):
         try:
+            if HISTORY_FILE.exists():
+                shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
             with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -295,8 +297,17 @@ def main():
     web_thread.start()
     
     # Wait for Shioaji server initialization
-    print("正在等待 Shioaji API 伺服器初始化（預估 8 秒）...")
-    time.sleep(8)
+    print("正在等待 Shioaji API 伺服器初始化...")
+    import urllib.request as _ur
+    for _ in range(30):
+        try:
+            _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
+            print("✅ Shioaji API 伺服器已就緒")
+            break
+        except Exception:
+            time.sleep(1)
+    else:
+        print("⚠ 等待 Shioaji API 伺服器逾時，繼續嘗試開啟瀏覽器...")
     
     # Auto-open browser
     print("正在自動開啟瀏覽器至 http://127.0.0.1:8081...")
