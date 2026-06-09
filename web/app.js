@@ -546,14 +546,37 @@ function renderSettlements() {
         return;
     }
     
-    state.settlements.forEach(s => {
+    // Sort settlements by T ascending to ensure progressive calculation
+    const sorted = [...state.settlements].sort((a, b) => a.T - b.T);
+    
+    let runningBalance = state.balance !== undefined && state.balance !== null ? state.balance : null;
+    
+    sorted.forEach(s => {
         const div = document.createElement('div');
         div.className = 'settlement-item';
         const amt = s.amount || 0;
+        
+        // T+0 balance is current bank balance
+        // T+1 balance = T+0 balance + T+1 settlement
+        // T+2 balance = T+1 balance + T+2 settlement
+        if (runningBalance !== null && s.T > 0) {
+            runningBalance += amt;
+        }
+        
+        const balanceText = runningBalance !== null ? formatCurrency(runningBalance) : '--';
         const colorClass = amt > 0 ? 'val-up' : (amt < 0 ? 'val-down' : '');
+        const amountPrefix = amt > 0 ? '+' : '';
+        
         div.innerHTML = `
             <div class="settlement-date">${s.date} (T+${s.T})</div>
-            <div class="settlement-amount ${colorClass}">${formatCurrency(amt)}</div>
+            <div class="settlement-amount ${colorClass}" style="font-size: 1.15rem; margin-top: 4px;">
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal; display: block; margin-bottom: 2px;">交割淨額</span>
+                ${amountPrefix}${formatCurrency(amt)}
+            </div>
+            <div class="settlement-balance" style="margin-top: 10px; font-family: var(--font-mono); font-size: 1rem; font-weight: 600; color: var(--text-primary);">
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal; display: block; margin-bottom: 2px;">預估餘額</span>
+                ${balanceText}
+            </div>
         `;
         container.appendChild(div);
     });
