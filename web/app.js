@@ -22,6 +22,7 @@ let state = {
     pollingTimer: null,
     sseConnection: null,
     drawerExchange: 'TSE',
+    idleTimer: null,
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
@@ -31,10 +32,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     initWatchlistControls();
     initDrawerControls();
     initHistoryControls();
-    
+    initIdleTimeout();
+
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
-    
+
     // 定時監控伺服器狀態 (每 10 秒)
     setInterval(checkServerStatus, 10000);
 });
@@ -1335,6 +1337,46 @@ function renderHistoryTable() {
         tbody.appendChild(tr);
         document.getElementById(`actions-${item.date}`).appendChild(deleteBtn);
     });
+}
+
+// ── 閒置逾時機制 ────────────────────────────────────────────────────────
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 分鐘
+
+function initIdleTimeout() {
+    const overlay = document.getElementById('idle-modal-overlay');
+
+    function handleIdleTimeout() {
+        // 停止所有資料更新
+        stopPolling();
+        closeSSE();
+
+        // 顯示斷線提示
+        overlay.style.display = 'flex';
+    }
+
+    function resetIdleTimer() {
+        clearTimeout(state.idleTimer);
+        state.idleTimer = setTimeout(handleIdleTimeout, IDLE_TIMEOUT_MS);
+    }
+
+    // 監聽使用者任何互動即重置計時器（節流：每秒最多重置一次）
+    let throttled = false;
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'].forEach(evt => {
+        document.addEventListener(evt, () => {
+            if (throttled) return;
+            throttled = true;
+            setTimeout(() => { throttled = false; }, 1000);
+            resetIdleTimer();
+        }, { passive: true });
+    });
+
+    // 重新整理頁面按鈕
+    document.getElementById('btn-idle-reconnect').addEventListener('click', () => {
+        location.reload();
+    });
+
+    // 啟動計時
+    resetIdleTimer();
 }
 
 // ── 格式化小工具 ────────────────────────────────────────────────────────
