@@ -489,12 +489,13 @@ function renderStockPositions() {
         const pnlRateVal = pos.pnl_rate !== undefined ? pos.pnl_rate : (pos.price > 0 ? ((pos.last_price - pos.price) / pos.price) * 100 : 0);
         const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${pnlRateVal.toFixed(2)}%`;
         const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
-        
+        const qtyStr = isOddLot(pos) ? `${pos.quantity}股` : `${pos.quantity}張`;
+
         tr.innerHTML = `
             <td class="mono" style="font-weight: 600; color: var(--color-accent);">${pos.code}</td>
             <td>${pos.name || '證券'}</td>
             <td>${dirStr}</td>
-            <td class="mono">${pos.quantity}</td>
+            <td class="mono">${qtyStr}</td>
             <td class="mono">${pos.price.toFixed(2)}</td>
             <td class="mono">${pos.last_price.toFixed(2)}</td>
             <td class="mono ${pnlClass}">${formatCurrency(pnl)}</td>
@@ -1112,7 +1113,7 @@ async function saveDailyAssetTotal() {
     // 計算證券持股總市值
     let totalStockMarketVal = 0;
     state.stockPositions.forEach(p => {
-        const cost = p.quantity * p.price * 1000;
+        const cost = p.quantity * p.price * lotMultiplier(p);
         totalStockMarketVal += cost + (p.pnl || 0);
     });
     
@@ -1317,6 +1318,17 @@ function renderHistoryTable() {
 }
 
 // ── 格式化小工具 ────────────────────────────────────────────────────────
+
+// 判斷持倉是否為零股（Shioaji 零股 order_lot 值為 IntradayOdd / Odd / BulkOdd）
+const ODD_LOT_TYPES = new Set(['IntradayOdd', 'Odd', 'BulkOdd']);
+function isOddLot(pos) {
+    return ODD_LOT_TYPES.has(pos.order_lot);
+}
+// 整張 quantity 單位為張（×1000 換成股），零股單位本身就是股
+function lotMultiplier(pos) {
+    return isOddLot(pos) ? 1 : 1000;
+}
+
 function formatCurrency(val) {
     if (val === null || val === undefined) return '--';
     return Number(val).toLocaleString('en-US', { maximumFractionDigits: 0 });
