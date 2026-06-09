@@ -41,6 +41,7 @@ let state = {
     drawerExchange: 'TSE',
     idleTimer: null,
     stockPositionUnit: 'Lot', // 'Share' 表示 API 已回傳股數（含零股）
+    tradingPermitted: true,
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
@@ -186,6 +187,17 @@ function setOfflineState() {
 
 async function loadSession() {
     try {
+        // 檢查交易權限
+        try {
+            const permResp = await fetch(`${LOCAL_API_BASE}/trade-permission`);
+            if (permResp.ok) {
+                const permData = await permResp.json();
+                state.tradingPermitted = permData.trading_permitted;
+            }
+        } catch (e) {
+            console.error("無法獲取交易權限資訊", e);
+        }
+
         const response = await fetch(`${API_BASE}/auth/accounts`);
         if (!response.ok) return;
         
@@ -1343,6 +1355,10 @@ async function initDrawerControls() {
 }
 
 function openOrderDrawer(code, type, lastPrice, exchange) {
+    if (!state.tradingPermitted) {
+        alert("下單權限關閉");
+        return;
+    }
     if (type !== 'STK') {
         alert("目前介面暫不支援期貨線上委託交易。");
         return;

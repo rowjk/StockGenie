@@ -95,6 +95,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_proxy_request("GET")
         elif self.path == '/api/asset-history':
             self.handle_get_history()
+        elif self.path == '/api/trade-permission':
+            self.handle_get_trade_permission()
         else:
             super().do_GET()
 
@@ -123,6 +125,28 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         rel_path = self.path.partition('/proxy/')[2]
         target_url = f"http://127.0.0.1:8080/{rel_path}"
         
+        # Intercept order placement to enforce read-only protection
+        if method == "POST" and rel_path == "api/v1/order/place_order":
+            try:
+                env = load_env()
+                read_only_keys = {"HBUcuTmf3ZHa96vcVbhfCYUmtwQtofTHq9HJ2YRh64T"}
+                api_key = env.get("API_KEY", "")
+                
+                trading_permitted = True
+                if env.get("TRADING_ENABLED", "").lower() == "false":
+                    trading_permitted = False
+                elif api_key in read_only_keys:
+                    trading_permitted = False
+                elif not env.get("CA_CERT_PATH") or not env.get("CA_PASSWORD"):
+                    trading_permitted = False
+                
+                if not trading_permitted:
+                    self.send_json_error(400, "下單權限關閉")
+                    return
+            except Exception as e:
+                self.send_json_error(500, f"下單權限檢核異常: {e}")
+                return
+
         content_length = int(self.headers.get('Content-Length', 0))
         req_data = self.rfile.read(content_length) if content_length > 0 else None
         
@@ -149,6 +173,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json_error(e.code, str(ex))
         except Exception as e:
             self.send_json_error(500, f"Proxy error: {e}")
+
+    def handle_get_trade_permission(self):
+        try:
+            env = load_env()
+            read_only_keys = {"HBUcuTmf3ZHa96vcVbhfCYUmtwQtofTHq9HJ2YRh64T"}
+            api_key = env.get("API_KEY", "")
+            
+            trading_permitted = True
+            reason = ""
+            
+            if env.get("TRADING_ENABLED", "").lower() == "false":
+                trading_permitted = False
+                reason = "TRADING_ENABLED=false in config"
+            elif api_key in read_only_keys:
+                trading_permitted = False
+                reason = "API Key is read-only"
+            elif not env.get("CA_CERT_PATH") or not env.get("CA_PASSWORD"):
+                trading_permitted = False
+                reason = "CA cert not configured"
+                
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "trading_permitted": trading_permitted,
+                "reason": reason
+            }).encode('utf-8'))
+        except Exception as e:
+            self.send_json_error(500, str(e))
 
     def handle_get_history(self):
         history = self._read_history()
