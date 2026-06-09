@@ -320,6 +320,57 @@ a {
     background-color: rgba(245, 158, 11, 0.1);
 }
 
+/* ── 快速下單輸入框 ── */
+.quick-order-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.quick-order-wrap input {
+    width: 88px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.quick-order-wrap input:focus {
+    border-color: var(--color-accent);
+}
+.quick-order-wrap button {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--color-accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: opacity 0.2s;
+}
+.quick-order-wrap button:hover { opacity: 0.85; }
+
+/* ── 自選股列表下單按鈕 ── */
+.watchlist-order-btn {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    cursor: pointer;
+    font-size: 0.72rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.watchlist-item:hover .watchlist-order-btn {
+    opacity: 1;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;
