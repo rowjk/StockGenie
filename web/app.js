@@ -1,9 +1,26 @@
 /* ==========================================================================
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
+   ==========================================================================
+   版本歷史：
+   v1.3.16 (2026-06-09)
+   - [修正] drawCanvasLoading 函數宣告遺失造成整個 JS 語法錯誤
+   - [修正] renderDetailTickChart 畫圖前未 clearRect，導致「載入中...」殘留
+   - [修正] 自選股昨日參考價：snapshot API 無此欄位，改從 contracts API 補抓並快取
+   - [修正] 自選監控清單價格欄位對齊（watchlist-info flex:1，price-block 固定寬度）
+   - [效能] 新增 fetchKbarsWithCache：loadMAStats 與 renderDetailMAChart 共用同一份
+            2 年 kbars，避免每次點選股票都重複抓取（快取 1 小時）
+   - [效能] checkServerStatus 輪詢間隔 10s → 60s（每小時減少 300 次 /auth/usage）
+   - [效能] 新增 isTradingHours()：盤後完全跳過 trading_limits（永遠 500）
+   - [效能] 新增 _fetchCount：balance / position_unit / settlements / margin 降頻為
+            每 4 次 snapshot 週期執行一次（≈ 60s），snapshot 仍維持高頻即時更新
    ========================================================================== */
 
 const API_BASE = 'http://127.0.0.1:8081/proxy/api/v1';
 const LOCAL_API_BASE = 'http://127.0.0.1:8081/api';
+
+// ── Kbars 快取（session 內共用，避免重複抓 2 年歷史資料）──────────────────
+// key: code, value: { closes: [], fetchedAt: Date }
+const kbarsCache = {};
 
 // ── 應用程式狀態管理 ──────────────────────────────────────────────────────
 let state = {
@@ -37,8 +54,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
 
-    // 定時監控伺服器狀態 (每 10 秒)
-    setInterval(checkServerStatus, 10000);
+    // 定時監控伺服器狀態 (每 60 秒，降低 /auth/usage 呼叫頻率)
+    setInterval(checkServerStatus, 60000);
 });
 
 // ── 系統環境與主題設定 ────────────────────────────────────────────────────
@@ -298,14 +315,28 @@ function stopPolling() {
     }
 }
 
+// 計算目前是否在台灣交易時段（09:00–13:35）
+function isTradingHours() {
+    const now = new Date();
+    const h = now.getHours(), m = now.getMinutes();
+    const mins = h * 60 + m;
+    return mins >= 9 * 60 && mins <= 13 * 60 + 35;
+}
+
+// fetchData 呼叫計數器，用於降頻控制
+let _fetchCount = 0;
+
 async function fetchData() {
     if (!state.selectedAccount) return;
-    
+    _fetchCount++;
+    // 每 4 次才執行一次慢速 API（庫存、交割款、額度）≈ 每 60 秒
+    const doSlowApis = (_fetchCount % 4 === 1);
+
     const stockAcc = state.accounts.find(a => a.account_type === 'S');
     const futAcc = state.accounts.find(a => a.account_type === 'F');
     
-    // 1. 取得現貨可用餘額
-    if (stockAcc) {
+    // 1–4 慢速 API：僅在 doSlowApis 週期執行（約每 60 秒一次）
+    if (stockAcc && doSlowApis) {
         try {
             const resp = await fetch(`${API_BASE}/portfolio/account_balance`, {
                 method: 'POST',
@@ -325,8 +356,8 @@ async function fetchData() {
             console.error("獲取餘額失敗", e);
         }
         
-        // 2. 取得交易額度
-        try {
+        // 2. 取得交易額度（盤後 API 永遠 500，直接跳過）
+        if (isTradingHours()) try {
             const resp = await fetch(`${API_BASE}/portfolio/trading_limits`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -367,8 +398,8 @@ async function fetchData() {
             document.getElementById('limit-summary').textContent = '（非交易時段永豐 API 不開放查詢交易額度）';
             document.getElementById('limit-pct').textContent = '0%';
             document.getElementById('limit-progress').style.width = '0%';
-        }
-        
+        } // end isTradingHours block
+
         // 3. 取得股票庫存
         // 依序嘗試：unit=1 (int) → unit="Share" (string) → 無 unit (Lot 模式)
         // 開啟瀏覽器 Console 可看到詳細錯誤，有助診斷版本相容性問題
@@ -432,8 +463,13 @@ async function fetchData() {
         }
     }
     
-    // 5. 取得期貨保證金 (若期貨帳戶存在)
-    if (futAcc) {
+    // 期貨卡片顯示/隱藏（每次都跑）
+    if (!futAcc) {
+        document.getElementById('futures-card').style.display = 'none';
+        document.getElementById('futures-positions-card').style.display = 'none';
+    }
+    // 5–6. 期貨資料（降頻）
+    if (futAcc && doSlowApis) {
         document.getElementById('futures-card').style.display = 'block';
         document.getElementById('futures-positions-card').style.display = 'block';
         
@@ -484,12 +520,9 @@ async function fetchData() {
         } catch (e) {
             console.error("獲取期貨部位失敗", e);
         }
-    } else {
-        document.getElementById('futures-card').style.display = 'none';
-        document.getElementById('futures-positions-card').style.display = 'none';
     }
-    
-    // 7. 更新自選股即時資訊
+
+    // 7. 更新自選股即時資訊（每次都跑，這是最需要即時的資料）
     await updateWatchlistSnapshots();
     
     // 8. 儲存每日收盤財產總額
@@ -672,6 +705,7 @@ function initWatchlistControls() {
                     code: contract.code,
                     name: contract.name,
                     exchange: contract.exchange,
+                    reference: contract.reference || 0,
                     prices: []
                 });
                 
@@ -742,6 +776,9 @@ async function updateWatchlistSnapshots() {
                     item.volume = snap.volume;
                     item.total_volume = snap.total_volume;
                     item.yesterday_volume = snap.yesterday_volume;
+                    // 昨日參考價（Shioaji HTTP API 可能用 reference_price 或 reference）
+                    const refVal = snap.reference_price ?? snap.reference;
+                    if (refVal != null && refVal !== 0) item.reference = refVal;
                     
                     // 記錄價格陣列用於繪製 sparkline 走勢圖
                     if (!item.prices) item.prices = [];
@@ -861,6 +898,23 @@ async function selectWatchlistItem(code) {
 
     document.getElementById('btn-remove-watchlist').style.display = 'block';
 
+    // 若 reference（昨日參考價）尚未快取，從 contracts API 補抓（非阻塞）
+    const item = state.watchlist.find(w => w.code === code);
+    if (item && !item.reference) {
+        fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`)
+            .then(r => r.ok ? r.json() : null)
+            .then(c => {
+                if (c && c.reference) {
+                    item.reference = c.reference;
+                    // 如果細節視窗仍顯示此股票，即時更新
+                    if (document.getElementById('detail-code').textContent === code) {
+                        document.getElementById('detail-ref').textContent = c.reference;
+                    }
+                }
+            })
+            .catch(() => {});
+    }
+
     // 更新即時行情文字欄位
     updateDetailView(code);
 
@@ -922,39 +976,43 @@ function updateDetailView(code) {
     };
 }
 
-// 只更新 MA 數值欄位，不繪製圖表（selectWatchlistItem 一律呼叫）
-async function loadMAStats(code) {
-    const MA_PERIODS = [5, 20, 60, 240];
-    const idMap = { 5: 'detail-ma5', 20: 'detail-ma20', 60: 'detail-ma60', 240: 'detail-ma240' };
-
+// 共用 kbars 抓取（快取 1 小時，loadMAStats 與 renderDetailMAChart 共用）
+async function fetchKbarsWithCache(code) {
+    const CACHE_MS = 60 * 60 * 1000; // 1 小時
+    const cached = kbarsCache[code];
+    if (cached && (Date.now() - cached.fetchedAt < CACHE_MS)) {
+        return cached.closes;
+    }
     const item = state.watchlist.find(wi => wi.code === code);
     const exchange = item ? (item.exchange || 'TSE') : 'TSE';
-
     const end = new Date().toISOString().split('T')[0];
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 2);
     const start = startDate.toISOString().split('T')[0];
+    const resp = await fetch(`${API_BASE}/data/kbars`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contract: { security_type: 'STK', exchange, code }, start, end, frequency: '1D' })
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const closes = (data.Close || data.close || []).map(Number);
+    kbarsCache[code] = { closes, fetchedAt: Date.now() };
+    return closes;
+}
 
+// 只更新 MA 數值欄位，不繪製圖表（selectWatchlistItem 一律呼叫）
+async function loadMAStats(code) {
+    const MA_PERIODS = [5, 20, 60, 240];
+    const idMap = { 5: 'detail-ma5', 20: 'detail-ma20', 60: 'detail-ma60', 240: 'detail-ma240' };
     try {
-        const resp = await fetch(`${API_BASE}/data/kbars`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contract: { security_type: 'STK', exchange, code },
-                start, end, frequency: '1D'
-            })
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const closes = (data.Close || data.close || []).map(Number);
-        if (closes.length < 5) return;
-
+        const closes = await fetchKbarsWithCache(code);
+        if (!closes || closes.length < 5) return;
         MA_PERIODS.forEach(period => {
             const el = document.getElementById(idMap[period]);
             if (!el) return;
             if (closes.length < period) { el.textContent = '--'; return; }
-            const slice = closes.slice(-period);
-            const ma = slice.reduce((a, b) => a + b, 0) / period;
+            const ma = closes.slice(-period).reduce((a, b) => a + b, 0) / period;
             el.textContent = ma.toFixed(2);
         });
     } catch (e) {
@@ -963,6 +1021,7 @@ async function loadMAStats(code) {
 }
 
 
+function drawCanvasLoading(canvas, msg = '載入中...') {
     const ctx = canvas.getContext('2d');
     const w = canvas.width = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
@@ -1012,6 +1071,8 @@ async function renderDetailTickChart(code) {
                 lineColor = theme === 'dark' ? '#f8fafc' : '#0f172a';
             }
             
+            ctx.clearRect(0, 0, w, h);
+
             const grad = ctx.createLinearGradient(0, 0, 0, h);
             if (theme === 'dark') {
                 grad.addColorStop(0, 'rgba(99, 102, 241, 0.2)');
@@ -1020,7 +1081,7 @@ async function renderDetailTickChart(code) {
                 grad.addColorStop(0, 'rgba(99, 102, 241, 0.1)');
                 grad.addColorStop(1, 'rgba(99, 102, 241, 0)');
             }
-            
+
             ctx.beginPath();
             closes.forEach((val, idx) => {
                 const x = (idx / (closes.length - 1)) * w;
@@ -1054,32 +1115,14 @@ async function renderDetailMAChart(code) {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
 
-    const item = state.watchlist.find(wi => wi.code === code);
-    const exchange = item ? (item.exchange || 'TSE') : 'TSE';
-
-    // 抓近 2 年日線，確保 240MA 有足夠計算資料
-    const end = new Date().toISOString().split('T')[0];
-    const startDate = new Date();
-    startDate.setFullYear(startDate.getFullYear() - 2);
-    const start = startDate.toISOString().split('T')[0];
-
     try {
-        const resp = await fetch(`${API_BASE}/data/kbars`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contract: { security_type: 'STK', exchange, code },
-                start, end,
-                frequency: '1D'
-            })
-        });
-        if (!resp.ok) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">無法取得歷史資料</span>'; return; }
+        // 使用快取（與 loadMAStats 共用，避免重複抓 2 年資料）
+        const allCloses = await fetchKbarsWithCache(code);
+        if (!allCloses) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">無法取得歷史資料</span>'; return; }
 
         // 重新取得畫布尺寸（fetch 期間可能被重繪過）
         canvas.width = canvas.clientWidth;
         canvas.height = canvas.clientHeight;
-        const data = await resp.json();
-        const allCloses = (data.Close || data.close || []).map(Number);
         if (allCloses.length < 5) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">資料不足</span>'; return; }
 
         // 計算 MA，不足 period 的位置回傳 null

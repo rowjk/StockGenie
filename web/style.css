@@ -681,6 +681,8 @@ a {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1;
+    min-width: 0;
 }
 
 .watchlist-code {
@@ -692,14 +694,20 @@ a {
 .watchlist-name {
     font-size: 0.8rem;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .watchlist-chart {
+    flex-shrink: 0;
     width: 80px;
     height: 32px;
 }
 
 .watchlist-price-block {
+    flex-shrink: 0;
+    width: 80px;
     text-align: right;
     display: flex;
     flex-direction: column;
