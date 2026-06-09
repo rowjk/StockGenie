@@ -387,34 +387,23 @@ async function fetchData() {
                 body: JSON.stringify({ ...basePayload, ...extraBody })
             });
 
-            // 嘗試 1：unit=1 (整數)
-            let resp = await tryFetch({ unit: 1 });
+            // 優先 unit="Share"（字串），Shioaji HTTP server 回傳總股數含零股
+            // 若失敗則 fallback 至無 unit（Lot 模式，僅整張）
+            let resp = await tryFetch({ unit: 'Share' });
 
             if (!resp.ok) {
                 const errBody = await resp.text().catch(() => '');
-                console.warn(`[庫存] unit=1 失敗 HTTP${resp.status}: ${errBody}`);
-
-                // 嘗試 2：unit="Share" (字串)
-                resp = await tryFetch({ unit: 'Share' });
-            }
-
-            if (!resp.ok) {
-                const errBody = await resp.text().catch(() => '');
-                console.warn(`[庫存] unit="Share" 失敗 HTTP${resp.status}: ${errBody}`);
-
-                // 嘗試 3：不帶 unit（Lot 模式，只有整張）
+                console.warn(`[庫存] unit=Share 失敗 HTTP${resp.status}: ${errBody}，改用 Lot 模式`);
                 resp = await tryFetch({});
                 if (resp.ok) {
                     state.stockPositions = await resp.json();
                     state.stockPositionUnit = 'Lot';
-                    console.info('[庫存] 使用 Lot 模式（僅整張）');
                 } else {
                     console.error('[庫存] 所有模式均失敗');
                 }
             } else {
                 state.stockPositions = await resp.json();
                 state.stockPositionUnit = 'Share';
-                console.info('[庫存] 使用 Share 模式（含零股）');
             }
 
             renderStockPositions();
