@@ -585,17 +585,35 @@ function renderSettlements() {
 }
 
 // ── 自選股監控管理 ──────────────────────────────────────────────────────
-function initWatchlist() {
+async function initWatchlist() {
     const defaultList = ['2330', '2317', '0050'];
     const saved = localStorage.getItem('watchlist');
-    
+
     if (saved) {
         state.watchlist = JSON.parse(saved);
     } else {
         state.watchlist = defaultList.map(code => ({ code, name: '', exchange: 'TSE', prices: [] }));
         saveWatchlistLocal();
     }
-    
+
+    // snapshot API 不保證有名稱，針對缺名稱的項目補查 contracts endpoint
+    const nameless = state.watchlist.filter(item => !item.name);
+    if (nameless.length > 0) {
+        await Promise.all(nameless.map(async item => {
+            try {
+                const resp = await fetch(`${API_BASE}/data/contracts/${item.code}?security_type=STK`);
+                if (resp.ok) {
+                    const contract = await resp.json();
+                    item.name = contract.name || item.code;
+                    item.exchange = contract.exchange || item.exchange;
+                }
+            } catch (e) {
+                console.warn(`無法查詢 ${item.code} 合約資訊`, e);
+            }
+        }));
+        saveWatchlistLocal(); // 快取名稱，下次載入不需再查
+    }
+
     renderWatchlist();
 }
 
