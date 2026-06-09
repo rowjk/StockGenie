@@ -158,6 +158,7 @@ a {
     align-items: center;
     padding: 20px 0;
     z-index: 10;
+    overflow: hidden;
     transition: width var(--transition-slow), background-color var(--transition-normal);
 }
 
@@ -172,12 +173,19 @@ a {
     align-items: center;
     gap: 12px;
     height: 40px;
-    padding-left: 2px;
+    padding-left: 10px;
     font-weight: 700;
     font-size: 1.1rem;
     letter-spacing: 0.5px;
     overflow: hidden;
     white-space: nowrap;
+    width: 44px;
+    transition: width var(--transition-slow), padding-left var(--transition-slow);
+}
+
+.sidebar:hover .sidebar-brand {
+    width: 100%;
+    padding-left: 12px;
 }
 
 .sidebar-brand svg {
@@ -217,6 +225,7 @@ a {
     transition: all var(--transition-fast);
     overflow: hidden;
     white-space: nowrap;
+    width: 44px;
 }
 
 .sidebar:hover .sidebar-item {
