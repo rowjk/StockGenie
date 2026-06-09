@@ -907,6 +907,9 @@ function updateDetailView(code) {
         document.getElementById('detail-close').textContent = '--';
         document.getElementById('detail-close').className = '';
         document.getElementById('detail-volume').textContent = '--';
+        ['detail-ma5','detail-ma20','detail-ma60','detail-ma240'].forEach(id => {
+            document.getElementById(id).textContent = '--';
+        });
         document.getElementById('btn-remove-watchlist').style.display = 'none';
         
         const canvas = document.getElementById('detail-tick-chart');
@@ -1088,6 +1091,15 @@ async function renderDetailMAChart(code) {
         legendEl.innerHTML = MA_DEFS.map(d =>
             `<span style="color:${d.color};font-size:0.72rem;font-family:var(--font-mono);">─ ${d.label}</span>`
         ).join('');
+
+        // 填入最新 MA 數值到資料格
+        const maIdMap = { 5: 'detail-ma5', 20: 'detail-ma20', 60: 'detail-ma60', 240: 'detail-ma240' };
+        mas.forEach(ma => {
+            const el = document.getElementById(maIdMap[ma.period]);
+            if (!el) return;
+            const latest = [...ma.values].reverse().find(v => v !== null);
+            el.textContent = latest !== undefined ? latest.toFixed(2) : '--';
+        });
 
     } catch (e) {
         console.error('獲取均線資料失敗', e);
