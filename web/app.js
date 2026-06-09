@@ -863,8 +863,11 @@ async function selectWatchlistItem(code) {
 
     document.getElementById('btn-remove-watchlist').style.display = 'block';
 
-    // 更新細節面板文字
+    // 更新即時行情文字欄位
     updateDetailView(code);
+
+    // 不論哪個 tab，都立即抓取 MA 數值顯示於資料格（非阻塞）
+    loadMAStats(code);
 
     // 依目前選取的 tab 決定渲染哪張圖
     const activeTab = document.querySelector('.detail-tab.active');
@@ -921,7 +924,47 @@ function updateDetailView(code) {
     };
 }
 
-function drawCanvasLoading(canvas, msg = '載入中...') {
+// 只更新 MA 數值欄位，不繪製圖表（selectWatchlistItem 一律呼叫）
+async function loadMAStats(code) {
+    const MA_PERIODS = [5, 20, 60, 240];
+    const idMap = { 5: 'detail-ma5', 20: 'detail-ma20', 60: 'detail-ma60', 240: 'detail-ma240' };
+
+    const item = state.watchlist.find(wi => wi.code === code);
+    const exchange = item ? (item.exchange || 'TSE') : 'TSE';
+
+    const end = new Date().toISOString().split('T')[0];
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 2);
+    const start = startDate.toISOString().split('T')[0];
+
+    try {
+        const resp = await fetch(`${API_BASE}/data/kbars`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contract: { security_type: 'STK', exchange, code },
+                start, end, frequency: '1D'
+            })
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const closes = (data.Close || data.close || []).map(Number);
+        if (closes.length < 5) return;
+
+        MA_PERIODS.forEach(period => {
+            const el = document.getElementById(idMap[period]);
+            if (!el) return;
+            if (closes.length < period) { el.textContent = '--'; return; }
+            const slice = closes.slice(-period);
+            const ma = slice.reduce((a, b) => a + b, 0) / period;
+            el.textContent = ma.toFixed(2);
+        });
+    } catch (e) {
+        console.warn('loadMAStats 失敗', e);
+    }
+}
+
+
     const ctx = canvas.getContext('2d');
     const w = canvas.width = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
