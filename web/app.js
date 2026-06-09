@@ -28,13 +28,11 @@ let state = {
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    initSettings();
-    initNavigation();
-    initWatchlistControls();
-    initDrawerControls();
-    initHistoryControls();
-    initIdleTimeout();
-    initQuickOrder();
+    // 逐一初始化，任一失敗不中斷後續（防止快取版 HTML 缺少元素時全崩）
+    for (const fn of [initSettings, initNavigation, initWatchlistControls,
+                      initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder]) {
+        try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
+    }
 
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
@@ -696,7 +694,7 @@ function initWatchlistControls() {
         }
     });
 
-    // 分時 / 均線 Tab 切換
+    // 分時 / 均線 Tab 切換（若元素不存在則略過，防快取舊 HTML 崩潰）
     document.querySelectorAll('.detail-tab').forEach(tab => {
         tab.addEventListener('click', async () => {
             document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
@@ -1641,6 +1639,7 @@ function initIdleTimeout() {
 function initQuickOrder() {
     const input = document.getElementById('quick-order-input');
     const btn = document.getElementById('btn-quick-order');
+    if (!input || !btn) return; // 防止舊版快取 HTML 缺少元素時崩潰
 
     const doQuickOrder = async () => {
         const code = input.value.trim().toUpperCase();
