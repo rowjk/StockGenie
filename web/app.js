@@ -2,6 +2,28 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.4.2 (2026-06-10)
+   - [風格] 新增「駭客任務 The Matrix」顯示風格：純黑底螢光綠、數值輝光、各 Canvas 圖表同步綠化
+   - [風格] Matrix 風格僅支援暗色背景：選用時強制 dark 主題並鎖定主題切換按鈕（hover 顯示原因），
+            切回其他風格自動還原使用者原本的主題偏好
+   - [圖表] 已實現月度損益 bar 上顯示每月金額；主題/配色切換時同步重繪損益圖（修正淺色背景下舊色 bar 隱形）
+   v1.4.1 (2026-06-10)
+   - [效能] fetchData 帳務 API（餘額/額度/庫存/交割款）由序列 await 改為 Promise.allSettled
+            並行發出；快照不再被帳務查詢卡住。永豐帳務後台單支偶發數秒延遲時，
+            首屏等待時間由「各支相加」縮短為「最慢一支」
+   - [修正] TWSE 憑證鏈缺 SKI 導致驗證失敗：先正常驗證、失敗自動降級寬鬆 SSL 重試
+   - [排障] Proxy 上游錯誤與逾時改印詳細原因至終端機；帳務端點等待上限 10s→30s
+   v1.4.0 (2026-06-10) — 系統優化實施計畫（終極防窺自訂版）
+   - [退場] 期貨功能全面移除：UI 卡片/表格、margin 與 F 帳戶持倉輪詢、相關 state
+   - [總覽] 新增「庫存證券總市值」「總資產」卡片；新增 T+2 違約交割缺口橘黃警示條
+   - [防窺] Boss Key 一鍵隱私遮蔽（Esc）：金額 ***** 遮蔽 + 全 Canvas 清空印 [DATA MASKED]
+   - [防窺] Terminal Log Mode（雙擊 Space）：黑底綠字伺服器日誌偽裝，行情/損益化為 heartbeat
+   - [快捷鍵] window keydown 監聽；Space 於非輸入框一律 preventDefault 阻斷滾動跳動
+   - [自訂] 總覽卡片顯示開關（localStorage 持久化）；自選股上限 20 檔、快照每 10 檔分批查詢
+   - [明細] 委買委賣多空力道對比條（snapshot 最佳一檔委託量）
+   - [帳務] 已實現月度損益條形圖（後端 Proxy 自動補前 365 天參數）
+   - [看板] TWSE 重大訊息日誌與除權息行事曆（每 10 分鐘更新）
+   - [資料] 歷史數據匯出 JSON / 匯入含後端嚴格 Schema 校驗（整批通過才寫入）
    v1.3.25 (2026-06-10)
    - [快取] 伺服器端 DashboardHandler 新增 Cache-Control 停用快取標頭，解決瀏覽器快取舊網頁與樣式問題
    - [排版] 強力修正隱形黑白模式下，白底按鈕及 hovered tabs 字體偏白導致文字看不見的問題，將文字顏色強制設為 bg-primary
@@ -49,9 +71,7 @@ let state = {
     accounts: [],
     selectedAccount: null,
     stockPositions: [],
-    futuresPositions: [],
     balance: 0,
-    margin: null,
     limit: null,
     settlements: [],
     watchlist: [], // 包含 {code, name, exchange, prices: []}
@@ -65,13 +85,21 @@ let state = {
     idleTimer: null,
     stockPositionUnit: 'Lot', // 'Share' 表示 API 已回傳股數（含零股）
     tradingPermitted: true,
+    bossKey: false,          // 一鍵隱私遮蔽 (Boss Key / Mask Mode)
+    terminalMode: false,     // 終端機日誌看盤模式
+    terminalLogTimer: null,
+    stockMarketValue: 0,
+    totalAssets: 0,
+    profitLoss: [],          // 已實現損益原始紀錄
+    twseFeedTimer: null,     // TWSE 公告/除權息定時更新
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     // 逐一初始化，任一失敗不中斷後續（防止快取版 HTML 缺少元素時全崩）
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
-                      initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder]) {
+                      initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
+                      initPrivacyControls, initCardConfig]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
 
@@ -100,6 +128,7 @@ function initSettings() {
     
     document.documentElement.setAttribute('data-theme', savedTheme);
     document.documentElement.setAttribute('data-scheme', savedScheme);
+    applyThemeLockForScheme(savedScheme);
     state.refreshInterval = parseInt(savedInterval);
     
     // 設定 UI 控制項預設值
@@ -113,6 +142,10 @@ function initSettings() {
         const newTheme = currentTheme === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', newTheme);
         localStorage.setItem('theme', newTheme);
+        // 主題變更後以新色彩重繪所有 Canvas 圖表（否則舊色 bar 在新背景上會隱形）
+        renderAssetChart();
+        renderWatchlist();
+        renderPnlChart();
     });
     
     // 配色方案下拉選單更動事件
@@ -122,9 +155,11 @@ function initSettings() {
         localStorage.setItem('scheme', val);
         document.getElementById('scheme-selector').value = val;
         document.getElementById('settings-scheme-selector').value = val;
+        applyThemeLockForScheme(val);
         // 重新繪製圖表
         renderAssetChart();
         renderWatchlist();
+        renderPnlChart();
     };
     
     document.getElementById('scheme-selector').addEventListener('change', handleSchemeChange);
@@ -136,6 +171,26 @@ function initSettings() {
         localStorage.setItem('refreshInterval', e.target.value);
         restartPolling();
     });
+}
+
+// ── Matrix 風格主題鎖定 ──────────────────────────────────────────────────
+// Matrix 風格僅支援暗色背景：選用時強制 data-theme=dark 並鎖住主題切換按鈕；
+// 切回其他風格時還原使用者原本儲存的主題偏好
+function applyThemeLockForScheme(scheme) {
+    const btn = document.getElementById('theme-toggle');
+    if (scheme === 'matrix') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        if (btn) {
+            btn.disabled = true;
+            btn.title = 'Matrix 風格僅支援暗色背景（鎖定）';
+        }
+    } else {
+        document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+        if (btn) {
+            btn.disabled = false;
+            btn.title = '切換亮/暗主題';
+        }
+    }
 }
 
 // ── 側邊欄導覽切換 ────────────────────────────────────────────────────────
@@ -281,9 +336,19 @@ async function loadSession() {
         
         // 載入本地資產歷史紀錄
         await loadAssetHistory();
-        
+
         // 初始化自選股清單
-        initWatchlist();
+        await initWatchlist();
+
+        // 清單就緒後立即補打一次快照（首輪 fetchData 跑時清單尚未載入，會跳過）
+        updateWatchlistSnapshots();
+
+        // 已實現損益圖表與 TWSE 看板（公告 / 除權息）
+        loadProfitLoss();
+        loadTwseFeeds();
+        if (!state.twseFeedTimer) {
+            state.twseFeedTimer = setInterval(loadTwseFeeds, 10 * 60 * 1000); // 每 10 分鐘
+        }
 
     } catch (e) {
         console.error("載入 API 會話資訊失敗", e);
@@ -377,31 +442,53 @@ async function fetchData() {
     const doSlowApis = (_fetchCount % 4 === 1);
 
     const stockAcc = state.accounts.find(a => a.account_type === 'S');
-    const futAcc = state.accounts.find(a => a.account_type === 'F');
-    
+
     // 1–4 慢速 API：僅在 doSlowApis 週期執行（約每 60 秒一次）
+    // [效能] 帳務 API 彼此獨立，改為「並行」發出：永豐帳務後台偶發回應緩慢（單支可達數秒），
+    // 序列等待會相加導致首屏極慢，並行後總等待時間 = 最慢的一支
+    const tasks = [];
     if (stockAcc && doSlowApis) {
-        try {
-            const resp = await fetch(`${API_BASE}/portfolio/account_balance`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    broker_id: stockAcc.broker_id,
-                    account_id: stockAcc.account_id,
-                    person_id: stockAcc.person_id
-                })
-            });
-            if (resp.ok) {
-                const bal = await resp.json();
-                state.balance = bal.acc_balance;
-                document.getElementById('cash-balance').textContent = formatCurrency(state.balance);
-            }
-        } catch (e) {
-            console.error("獲取餘額失敗", e);
+        tasks.push(fetchBalance(stockAcc));
+        if (isTradingHours()) tasks.push(fetchTradingLimits(stockAcc));
+        tasks.push(fetchStockPositions(stockAcc));
+        tasks.push(fetchSettlements(stockAcc));
+    }
+    // 自選股即時資訊（每次都跑，最需要即時，不再被帳務查詢卡住）
+    tasks.push(updateWatchlistSnapshots());
+    await Promise.allSettled(tasks);
+
+    // 交割款預估餘額依賴最新 balance，全部完成後再渲染
+    renderSettlements();
+
+    // 儲存每日收盤財產總額
+    await saveDailyAssetTotal();
+}
+
+// ── 慢速帳務 API（由 fetchData 並行調度）──────────────────────────────────
+async function fetchBalance(stockAcc) {
+    try {
+        const resp = await fetch(`${API_BASE}/portfolio/account_balance`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                broker_id: stockAcc.broker_id,
+                account_id: stockAcc.account_id,
+                person_id: stockAcc.person_id
+            })
+        });
+        if (resp.ok) {
+            const bal = await resp.json();
+            state.balance = bal.acc_balance;
+            document.getElementById('cash-balance').textContent = formatCurrency(state.balance);
         }
-        
-        // 2. 取得交易額度（盤後 API 永遠 500，直接跳過）
-        if (isTradingHours()) try {
+    } catch (e) {
+        console.error("獲取餘額失敗", e);
+    }
+}
+
+// 取得交易額度（盤後 API 永遠 500，由呼叫端跳過）
+async function fetchTradingLimits(stockAcc) {
+    try {
             const resp = await fetch(`${API_BASE}/portfolio/trading_limits`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -442,12 +529,14 @@ async function fetchData() {
             document.getElementById('limit-summary').textContent = '（非交易時段永豐 API 不開放查詢交易額度）';
             document.getElementById('limit-pct').textContent = '0%';
             document.getElementById('limit-progress').style.width = '0%';
-        } // end isTradingHours block
+        }
+}
 
-        // 3. 取得股票庫存
-        // 依序嘗試：unit=1 (int) → unit="Share" (string) → 無 unit (Lot 模式)
-        // 開啟瀏覽器 Console 可看到詳細錯誤，有助診斷版本相容性問題
-        try {
+// 取得股票庫存
+// 依序嘗試：unit=1 (int) → unit="Share" (string) → 無 unit (Lot 模式)
+// 開啟瀏覽器 Console 可看到詳細錯誤，有助診斷版本相容性問題
+async function fetchStockPositions(stockAcc) {
+    try {
             const basePayload = {
                 account_type: 'S',
                 broker_id: stockAcc.broker_id,
@@ -486,9 +575,11 @@ async function fetchData() {
             console.error("獲取股票庫存失敗", e);
             renderStockPositions();
         }
+}
 
-        // 4. 取得近三日交割款
-        try {
+// 取得近三日交割款（渲染交由 fetchData 在全部完成後統一執行）
+async function fetchSettlements(stockAcc) {
+    try {
             const resp = await fetch(`${API_BASE}/portfolio/settlements`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -500,77 +591,10 @@ async function fetchData() {
             });
             if (resp.ok) {
                 state.settlements = await resp.json();
-                renderSettlements();
             }
         } catch (e) {
             console.error("獲取交割款數據失敗", e);
         }
-    }
-    
-    // 期貨卡片顯示/隱藏（每次都跑）
-    if (!futAcc) {
-        document.getElementById('futures-card').style.display = 'none';
-        document.getElementById('futures-positions-card').style.display = 'none';
-    }
-    // 5–6. 期貨資料（降頻）
-    if (futAcc && doSlowApis) {
-        document.getElementById('futures-card').style.display = 'block';
-        document.getElementById('futures-positions-card').style.display = 'block';
-        
-        try {
-            const resp = await fetch(`${API_BASE}/portfolio/margin`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    broker_id: futAcc.broker_id,
-                    account_id: futAcc.account_id,
-                    person_id: futAcc.person_id
-                })
-            });
-            if (resp.ok) {
-                state.margin = await resp.json();
-                
-                document.getElementById('futures-balance').textContent = formatCurrency(state.margin.today_balance);
-                const openPnl = state.margin.future_open_position || 0;
-                
-                const pnlEl = document.getElementById('futures-open-pnl');
-                pnlEl.textContent = formatCurrency(openPnl);
-                pnlEl.className = openPnl >= 0 ? 'val-up' : 'val-down';
-                
-                const riskBadge = document.getElementById('futures-risk-badge');
-                riskBadge.textContent = `風險指標: ${state.margin.risk_indicator.toFixed(1)}%`;
-                riskBadge.className = state.margin.risk_indicator > 80 ? 'badge-up' : 'badge-down';
-            }
-        } catch (e) {
-            console.error("獲取期貨保證金失敗", e);
-        }
-        
-        // 6. 取得期貨部位
-        try {
-            const resp = await fetch(`${API_BASE}/portfolio/position_unit`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    account_type: 'F',
-                    broker_id: futAcc.broker_id,
-                    account_id: futAcc.account_id,
-                    person_id: futAcc.person_id
-                })
-            });
-            if (resp.ok) {
-                state.futuresPositions = await resp.json();
-                renderFuturesPositions();
-            }
-        } catch (e) {
-            console.error("獲取期貨部位失敗", e);
-        }
-    }
-
-    // 7. 更新自選股即時資訊（每次都跑，這是最需要即時的資料）
-    await updateWatchlistSnapshots();
-    
-    // 8. 儲存每日收盤財產總額
-    await saveDailyAssetTotal();
 }
 
 function renderStockPositions() {
@@ -606,35 +630,6 @@ function renderStockPositions() {
             <td class="mono">${pos.last_price.toFixed(2)}</td>
             <td class="mono ${pnlClass}">${formatCurrency(pnl)}</td>
             <td class="mono ${pnlClass}">${pnlPct}</td>
-        `;
-        tbody.appendChild(tr);
-    });
-}
-
-function renderFuturesPositions() {
-    const tbody = document.querySelector('#futures-positions-table tbody');
-    tbody.innerHTML = '';
-    
-    if (state.futuresPositions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">此帳戶目前無期貨部位。</td></tr>';
-        return;
-    }
-    
-    state.futuresPositions.forEach(pos => {
-        const tr = document.createElement('tr');
-        tr.onclick = () => openOrderDrawer(pos.code, 'FUT', pos.last_price);
-        
-        const pnl = pos.pnl || 0;
-        const pnlClass = pnl >= 0 ? 'val-up' : 'val-down';
-        const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '多頭' : '空頭';
-        
-        tr.innerHTML = `
-            <td class="mono" style="font-weight: 600; color: var(--color-accent);">${pos.code}</td>
-            <td>${dirStr}</td>
-            <td class="mono">${pos.quantity}</td>
-            <td class="mono">${pos.price.toFixed(2)}</td>
-            <td class="mono">${pos.last_price.toFixed(2)}</td>
-            <td class="mono ${pnlClass}">${formatCurrency(pnl)}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -688,6 +683,17 @@ function renderSettlements() {
         `;
         container.appendChild(div);
     });
+
+    // T+2 違約交割缺口主動警示：交割款逐日累計後的最終預估餘額 < 0 即顯示
+    const alertBar = document.getElementById('t2-alert-bar');
+    if (alertBar) {
+        if (runningBalance !== null && runningBalance < 0) {
+            document.getElementById('t2-gap').textContent = formatCurrency(Math.abs(runningBalance));
+            alertBar.style.display = 'flex';
+        } else {
+            alertBar.style.display = 'none';
+        }
+    }
 }
 
 // ── 自選股監控管理 ──────────────────────────────────────────────────────
@@ -732,7 +738,13 @@ function initWatchlistControls() {
         const input = document.getElementById('watchlist-search-input');
         const code = input.value.trim();
         if (!code) return;
-        
+
+        // 自選股上限 20 檔（搭配每 10 檔分批查詢快照）
+        if (state.watchlist.length >= 20) {
+            alert('自選監控清單已達上限 20 檔，請先移除部分股票再新增。');
+            return;
+        }
+
         try {
             // 查詢合約資訊，優先用 STK (股票) 查，若查無則用 IND (指數) 查
             let secType = 'STK';
@@ -811,22 +823,30 @@ function initWatchlistControls() {
 
 async function updateWatchlistSnapshots() {
     if (state.watchlist.length === 0) return;
-    
+
     const contracts = state.watchlist.map(item => ({
         security_type: item.security_type || 'STK',
         exchange: item.exchange,
         code: item.code
     }));
-    
+
     try {
-        const resp = await fetch(`${API_BASE}/data/snapshots`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contracts })
-        });
-        if (resp.ok) {
-            const snapshots = await resp.json();
-            
+        // 以每 10 檔為一組分批查詢，降低單次請求量與 API 限流超時風險
+        const CHUNK_SIZE = 10;
+        const snapshots = [];
+        for (let i = 0; i < contracts.length; i += CHUNK_SIZE) {
+            const resp = await fetch(`${API_BASE}/data/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contracts: contracts.slice(i, i + CHUNK_SIZE) })
+            });
+            if (resp.ok) {
+                snapshots.push(...await resp.json());
+            } else {
+                console.warn(`快照分批查詢失敗 (chunk ${i / CHUNK_SIZE + 1}) HTTP${resp.status}`);
+            }
+        }
+        if (snapshots.length > 0) {
             snapshots.forEach(snap => {
                 const item = state.watchlist.find(w => w.code === snap.code);
                 if (item) {
@@ -840,6 +860,9 @@ async function updateWatchlistSnapshots() {
                     item.volume = snap.volume;
                     item.total_volume = snap.total_volume;
                     item.yesterday_volume = snap.yesterday_volume;
+                    // 委買/委賣掛單張數（HTTP snapshot 提供最佳一檔的委託量）
+                    if (snap.buy_volume != null) item.buy_volume = snap.buy_volume;
+                    if (snap.sell_volume != null) item.sell_volume = snap.sell_volume;
                     // 昨日參考價（Shioaji HTTP API 可能用 reference_price 或 reference）
                     const refVal = snap.reference_price ?? snap.reference;
                     if (refVal != null && refVal !== 0) item.reference = refVal;
@@ -980,6 +1003,7 @@ function moveWatchlistItemDown(index) {
 
 function drawSparkline(canvas, prices, isUp) {
     if (!canvas) return;
+    if (state.bossKey) { maskCanvas(canvas); return; }
     const ctx = canvas.getContext('2d');
     const w = canvas.width = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
@@ -1006,8 +1030,10 @@ function drawSparkline(canvas, prices, isUp) {
     } else if (scheme === 'stealth') {
         const theme = document.documentElement.getAttribute('data-theme');
         strokeColor = theme === 'dark' ? '#f8fafc' : '#0f172a';
+    } else if (scheme === 'matrix') {
+        strokeColor = isUp ? '#00ff41' : '#1f8a3d';
     }
-    
+
     ctx.beginPath();
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = 1.5;
@@ -1076,7 +1102,10 @@ function updateDetailView(code) {
     closeEl.className = rateVal > 0 ? 'val-up' : (rateVal < 0 ? 'val-down' : '');
     
     document.getElementById('detail-volume').textContent = item.total_volume || '--';
-    
+
+    // 更新盤中委買委賣多空力道對比條
+    updateStrengthBar(item);
+
     // 設定移除自選股按鈕功能
     document.getElementById('btn-remove-watchlist').onclick = () => {
         state.watchlist = state.watchlist.filter(w => w.code !== code);
@@ -1168,6 +1197,7 @@ function drawCanvasLoading(canvas, msg = '載入中...') {
 
 async function renderDetailTickChart(code) {
     const canvas = document.getElementById('detail-tick-chart');
+    if (state.bossKey) { maskCanvas(canvas); return; }
     drawCanvasLoading(canvas);
     const ctx = canvas.getContext('2d');
     const w = canvas.clientWidth;
@@ -1204,12 +1234,17 @@ async function renderDetailTickChart(code) {
             let lineColor = '#6366f1';
             if (scheme === 'stealth') {
                 lineColor = theme === 'dark' ? '#f8fafc' : '#0f172a';
+            } else if (scheme === 'matrix') {
+                lineColor = '#00ff41';
             }
-            
+
             ctx.clearRect(0, 0, w, h);
 
             const grad = ctx.createLinearGradient(0, 0, 0, h);
-            if (theme === 'dark') {
+            if (scheme === 'matrix') {
+                grad.addColorStop(0, 'rgba(0, 255, 65, 0.18)');
+                grad.addColorStop(1, 'rgba(0, 255, 65, 0)');
+            } else if (theme === 'dark') {
                 grad.addColorStop(0, 'rgba(99, 102, 241, 0.2)');
                 grad.addColorStop(1, 'rgba(99, 102, 241, 0)');
             } else {
@@ -1244,6 +1279,7 @@ async function renderDetailTickChart(code) {
 async function renderDetailMAChart(code) {
     const canvas = document.getElementById('detail-ma-chart');
     const legendEl = document.getElementById('detail-ma-legend');
+    if (state.bossKey) { maskCanvas(canvas); legendEl.innerHTML = ''; return; }
     drawCanvasLoading(canvas, '正在載入均線資料...');
     legendEl.innerHTML = '';
     const ctx = canvas.getContext('2d');
@@ -1553,13 +1589,16 @@ async function saveDailyAssetTotal() {
         totalStockMarketVal += cost + (p.pnl || 0); // 成本 + 損益 = 當前市值
     });
     
-    const futuresBalance = state.margin ? state.margin.today_balance : 0;
-    const totalAssets = state.balance + totalStockMarketVal + futuresBalance;
-    
+    const totalAssets = state.balance + totalStockMarketVal;
+    state.stockMarketValue = totalStockMarketVal;
+    state.totalAssets = totalAssets;
+
     const today = new Date().toISOString().split('T')[0];
 
     // 每次都更新即時顯示
     document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
+    document.getElementById('stock-market-value').textContent = formatCurrency(totalStockMarketVal);
+    document.getElementById('total-assets').textContent = formatCurrency(totalAssets);
 
     // 每天只寫入 JSON 一次，避免每 15 秒重複覆寫
     if (localStorage.getItem('lastSavedDate') === today) return;
@@ -1587,6 +1626,7 @@ async function saveDailyAssetTotal() {
 function renderAssetChart() {
     const canvas = document.getElementById('trend-chart');
     if (!canvas) return;
+    if (state.bossKey) { maskCanvas(canvas); return; }
     const ctx = canvas.getContext('2d');
     const w = canvas.width = canvas.clientWidth;
     const h = canvas.height = canvas.clientHeight;
@@ -1616,6 +1656,8 @@ function renderAssetChart() {
         strokeColor = theme === 'dark' ? '#f8fafc' : '#0f172a';
     } else if (scheme === 'muted') {
         strokeColor = '#e11d48';
+    } else if (scheme === 'matrix') {
+        strokeColor = '#00ff41';
     }
     
     const len = sortedHistory.length;
@@ -1706,6 +1748,57 @@ function initHistoryControls() {
             console.error("手動記錄歷史資產失敗", e);
         }
     };
+
+    // ── 歷史數據匯出（下載 JSON 檔）──
+    const exportBtn = document.getElementById('btn-export-history');
+    if (exportBtn) exportBtn.onclick = async () => {
+        try {
+            const resp = await fetch(`${LOCAL_API_BASE}/asset-history`);
+            if (!resp.ok) { alert('讀取歷史資料失敗，無法匯出。'); return; }
+            const data = await resp.json();
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `asset_history_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (e) {
+            console.error('匯出歷史資料失敗', e);
+        }
+    };
+
+    // ── 歷史數據匯入（後端嚴格校驗，整批通過才寫入）──
+    const importBtn = document.getElementById('btn-import-history');
+    const fileInput = document.getElementById('import-history-file');
+    if (importBtn && fileInput) {
+        importBtn.onclick = () => fileInput.click();
+        fileInput.onchange = async () => {
+            const file = fileInput.files[0];
+            fileInput.value = ''; // 允許重複選同一檔案
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const resp = await fetch(`${LOCAL_API_BASE}/asset-history/import`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: text
+                });
+                if (resp.ok) {
+                    state.assetHistory = await resp.json();
+                    renderHistoryTable();
+                    renderAssetChart();
+                    showToastNotification(`歷史資料匯入成功，目前共 ${state.assetHistory.length} 筆紀錄。`);
+                } else {
+                    let msg = `HTTP ${resp.status}`;
+                    try { msg = (await resp.json()).error || msg; } catch (e) { /* keep */ }
+                    alert(`匯入失敗：${msg}\n（舊有歷史資料未被修改）`);
+                }
+            } catch (e) {
+                alert('匯入失敗：無法讀取檔案。');
+                console.error('匯入歷史資料失敗', e);
+            }
+        };
+    }
 }
 
 function renderHistoryTable() {
@@ -1889,6 +1982,415 @@ async function enrichPositionNames() {
             console.warn(`無法查詢 ${pos.code} 名稱`, e);
         }
     }));
+}
+
+// ── 已實現損益：月度條形圖（後端 Proxy 自動補前 365 天參數）──────────────
+async function loadProfitLoss() {
+    const stockAcc = state.accounts.find(a => a.account_type === 'S');
+    if (!stockAcc) return;
+    try {
+        const resp = await fetch(`${API_BASE}/portfolio/profit_loss`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                account_type: 'S',
+                broker_id: stockAcc.broker_id,
+                account_id: stockAcc.account_id,
+                person_id: stockAcc.person_id
+            })
+        });
+        if (!resp.ok) {
+            console.warn(`已實現損益查詢失敗 HTTP${resp.status}`);
+            return;
+        }
+        const data = await resp.json();
+        // 防禦式解析：可能回傳陣列或 {profitloss: [...]} 包裝
+        state.profitLoss = Array.isArray(data) ? data : (data.profitloss || data.data || []);
+        renderPnlChart();
+    } catch (e) {
+        console.error("獲取已實現損益失敗", e);
+    }
+}
+
+function renderPnlChart() {
+    const canvas = document.getElementById('pnl-chart');
+    if (!canvas) return;
+    if (state.bossKey) { maskCanvas(canvas); return; }
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.clientWidth;
+    const h = canvas.height = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    const list = state.profitLoss || [];
+    // 以月份 (YYYY-MM) 聚合已實現損益
+    const monthly = {};
+    list.forEach(item => {
+        const dateStr = item.date || item.ts || '';
+        const pnl = Number(item.pnl);
+        if (typeof dateStr !== 'string' || dateStr.length < 7 || !Number.isFinite(pnl)) return;
+        const month = dateStr.slice(0, 7);
+        monthly[month] = (monthly[month] || 0) + pnl;
+    });
+    const months = Object.keys(monthly).sort();
+
+    const summaryEl = document.getElementById('pnl-summary');
+    if (months.length === 0) {
+        if (summaryEl) summaryEl.textContent = '近一年無已實現損益紀錄';
+        ctx.fillStyle = '#64748b';
+        ctx.font = '13px var(--font-sans)';
+        ctx.textAlign = 'center';
+        ctx.fillText('近 365 天無已實現損益資料（或永豐帳務 API 尚未回應）。', w / 2, h / 2);
+        return;
+    }
+
+    const total = months.reduce((acc, m) => acc + monthly[m], 0);
+    if (summaryEl) summaryEl.textContent = `近一年合計: ${total >= 0 ? '+' : ''}${formatCurrency(total)} TWD`;
+
+    const values = months.map(m => monthly[m]);
+    const maxAbs = Math.max(...values.map(Math.abs)) || 1;
+    const padX = 8, labelH = 18;
+    const zeroY = (h - labelH) / 2;
+    const barAreaW = w - padX * 2;
+    const barW = Math.min(46, (barAreaW / months.length) * 0.6);
+    const rootStyle = getComputedStyle(document.documentElement);
+    const upColor = rootStyle.getPropertyValue('--color-up').trim() || '#3b82f6';
+    const downColor = rootStyle.getPropertyValue('--color-down').trim() || '#64748b';
+    const labelColor = rootStyle.getPropertyValue('--text-secondary').trim() || '#64748b';
+
+    // 零軸
+    ctx.strokeStyle = 'rgba(100, 116, 139, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padX, zeroY);
+    ctx.lineTo(w - padX, zeroY);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    months.forEach((m, i) => {
+        const val = monthly[m];
+        const cx = padX + (barAreaW / months.length) * (i + 0.5);
+        const barH = (Math.abs(val) / maxAbs) * (zeroY - 22); // 預留每月金額文字空間
+        ctx.fillStyle = val >= 0 ? upColor : downColor;
+        if (val >= 0) ctx.fillRect(cx - barW / 2, zeroY - barH, barW, Math.max(barH, 1));
+        else ctx.fillRect(cx - barW / 2, zeroY, barW, Math.max(barH, 1));
+
+        // 每月損益金額（正值在 bar 上方、負值在 bar 下方）
+        ctx.font = '9px var(--font-mono)';
+        ctx.fillStyle = labelColor;
+        const valStr = `${val >= 0 ? '+' : '-'}${formatCurrency(Math.abs(val))}`;
+        if (val >= 0) ctx.fillText(valStr, cx, zeroY - barH - 5);
+        else ctx.fillText(valStr, cx, zeroY + barH + 11);
+
+        // 月份座標
+        ctx.font = '10px var(--font-mono)';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(m.slice(2), cx, h - 4);
+    });
+}
+
+// ── TWSE 看板：自選股重大訊息日誌與除權息行事曆 ──────────────────────────
+async function loadTwseFeeds() {
+    const codes = state.watchlist.map(wi => wi.code).join(',');
+    if (!codes) return;
+
+    // 1. 重大訊息日誌
+    try {
+        const resp = await fetch(`${LOCAL_API_BASE}/twse-announcements?codes=${encodeURIComponent(codes)}`);
+        if (resp.ok) renderAnnouncements(await resp.json());
+    } catch (e) {
+        console.warn("載入 TWSE 重大訊息失敗", e);
+    }
+
+    // 2. 除權息行事曆
+    try {
+        const resp = await fetch(`${LOCAL_API_BASE}/twse-dividends?codes=${encodeURIComponent(codes)}`);
+        if (resp.ok) renderDividends(await resp.json());
+    } catch (e) {
+        console.warn("載入 TWSE 除權息失敗", e);
+    }
+}
+
+function renderAnnouncements(list) {
+    const container = document.getElementById('announcements-log');
+    const updatedEl = document.getElementById('announcements-updated');
+    if (!container) return;
+    if (updatedEl) updatedEl.textContent = `更新於 ${new Date().toLocaleTimeString()}`;
+
+    container.innerHTML = '';
+    if (!Array.isArray(list) || list.length === 0) {
+        container.innerHTML = '<div class="metric-subtitle">自選股目前無 TWSE 重大訊息公告。</div>';
+        return;
+    }
+    list.slice(0, 50).forEach(a => {
+        const div = document.createElement('div');
+        div.className = 'ann-line';
+        const t = String(a.time || '').padStart(6, '0');
+        const timeStr = `${t.slice(0, 2)}:${t.slice(2, 4)}`;
+        div.title = a.subject || '';
+        div.innerHTML = `<span class="ann-meta">[${a.date} ${timeStr}]</span> <span class="ann-code">${a.code}</span> ${escapeHtml(a.name || '')}：${escapeHtml(a.subject || '')}`;
+        container.appendChild(div);
+    });
+}
+
+function renderDividends(list) {
+    const container = document.getElementById('dividends-list');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const today = new Date().toISOString().split('T')[0];
+    const upcoming = (Array.isArray(list) ? list : []).filter(d => d.date >= today);
+
+    if (upcoming.length === 0) {
+        container.innerHTML = '<div class="metric-subtitle">自選股近期無除權息預告。</div>';
+        return;
+    }
+    upcoming.slice(0, 20).forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'dividend-item';
+        const amount = d.cash_dividend != null
+            ? `${d.cash_dividend.toFixed(2)} 元/股`
+            : (d.stock_dividend_ratio ? `配股率 ${d.stock_dividend_ratio}` : '尚未公告');
+        div.innerHTML = `
+            <span><span class="div-date">${d.date}</span>　<span class="mono">${d.code}</span> ${escapeHtml(d.name || '')}</span>
+            <span class="div-amount">除${escapeHtml(d.type || '息')}　${amount}</span>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+}
+
+// ── 隱私防護：Boss Key / Terminal Log Mode / 緊急快捷鍵 ──────────────────
+
+// 將 Canvas 完全清空並印上安全鎖定字樣（防止由波形或座標軸反推資產）
+function maskCanvas(canvas) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = canvas.clientWidth || canvas.width;
+    const h = canvas.height = canvas.clientHeight || canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('[DATA MASKED]', w / 2, h / 2);
+}
+
+function maskAllCanvases() {
+    document.querySelectorAll('canvas').forEach(maskCanvas);
+}
+
+function toggleBossKey() {
+    state.bossKey = !state.bossKey;
+    document.body.classList.toggle('boss-mode', state.bossKey);
+    const btn = document.getElementById('btn-boss-key');
+    if (btn) btn.classList.toggle('privacy-active', state.bossKey);
+
+    if (state.bossKey) {
+        // 立即清空所有圖表（含尚在輪詢的 sparkline，guard 會阻止重繪）
+        maskAllCanvases();
+    } else {
+        // 解除遮蔽：重繪所有圖表
+        renderAssetChart();
+        renderWatchlist();
+        if (typeof renderPnlChart === 'function') renderPnlChart();
+        const detailCode = document.getElementById('detail-code').textContent;
+        if (detailCode && detailCode !== '----') {
+            const activeTab = document.querySelector('.detail-tab.active');
+            const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'tick';
+            if (tabName === 'ma') renderDetailMAChart(detailCode);
+            else renderDetailTickChart(detailCode);
+        }
+    }
+}
+
+// ── Terminal Log Mode：黑底綠字伺服器日誌偽裝畫面 ────────────────────────
+const TERMINAL_MAX_LINES = 200;
+
+function appendTerminalLine(html, cls = '') {
+    const linesEl = document.getElementById('terminal-log-lines');
+    if (!linesEl) return;
+    const div = document.createElement('div');
+    if (cls) div.className = cls;
+    div.textContent = html;
+    linesEl.appendChild(div);
+    while (linesEl.children.length > TERMINAL_MAX_LINES) {
+        linesEl.removeChild(linesEl.firstChild);
+    }
+}
+
+// 終端機時間戳（本地時間，非 UTC）
+function terminalTimestamp() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// 輪播索引：依序輪流顯示自選股與持倉，避免隨機重複同一檔
+let _tlWatchIdx = 0;
+let _tlPosIdx = 0;
+
+// 把實際行情與損益偽裝成系統 heartbeat / 維運訊息
+function generateTerminalLog() {
+    const ts = terminalTimestamp();
+    const roll = Math.random();
+
+    // 45%：自選股行情 heartbeat（依序輪播）
+    if (roll < 0.45 && state.watchlist.length > 0) {
+        const item = state.watchlist[_tlWatchIdx++ % state.watchlist.length];
+        const price = item.close != null ? item.close.toFixed(2) : 'n/a';
+        const rate = item.change_rate != null ? `${item.change_rate >= 0 ? '+' : ''}${item.change_rate.toFixed(2)}` : '0.00';
+        appendTerminalLine(`${ts} [INFO] Heartbeat check code ${item.code}: price=${price} delta=${rate} latency=${(Math.random() * 20 + 2).toFixed(1)}ms`);
+        return;
+    }
+    // 15%：庫存損益偽裝為 worker 資源訊息（依序輪播）
+    if (roll < 0.60 && state.stockPositions.length > 0) {
+        const pos = state.stockPositions[_tlPosIdx++ % state.stockPositions.length];
+        const pnl = pos.pnl || 0;
+        appendTerminalLine(`${ts} [DEBUG] worker[${pos.code}] mem_delta=${pnl >= 0 ? '+' : ''}${Math.round(pnl)} kb cur=${(pos.last_price || 0).toFixed(2)}`, 'tl-dim');
+        return;
+    }
+    // 10%：總資產偽裝為 cache size
+    if (roll < 0.70 && state.totalAssets > 0) {
+        appendTerminalLine(`${ts} [TRACE] session cache flushed, size=${Math.round(state.totalAssets)} bytes`, 'tl-dim');
+        return;
+    }
+    // 其餘：擬真系統雜訊
+    const fillers = [
+        `${ts} [INFO] cron job sys-metrics-collector finished in ${(Math.random() * 300 + 20).toFixed(0)}ms`,
+        `${ts} [INFO] db connection pool healthy (active=${Math.floor(Math.random() * 8) + 2}/16)`,
+        `${ts} [DEBUG] gc cycle completed, reclaimed ${Math.floor(Math.random() * 4096)} kb`,
+        `${ts} [INFO] tls cert check ok, expires_in=${Math.floor(Math.random() * 200) + 30}d`,
+        `${ts} [WARN] retrying upstream sync (attempt 1/3)...`,
+    ];
+    const line = fillers[Math.floor(Math.random() * fillers.length)];
+    appendTerminalLine(line, line.includes('[WARN]') ? 'tl-warn' : '');
+}
+
+function toggleTerminalMode() {
+    state.terminalMode = !state.terminalMode;
+    const overlay = document.getElementById('terminal-log-overlay');
+    const btn = document.getElementById('btn-terminal-mode');
+    if (btn) btn.classList.toggle('privacy-active', state.terminalMode);
+    if (!overlay) return;
+
+    if (state.terminalMode) {
+        overlay.classList.add('active');
+        appendTerminalLine(`${terminalTimestamp()} [INFO] sysmonitor daemon attached (pid=${Math.floor(Math.random() * 20000) + 1000})`);
+        state.terminalLogTimer = setInterval(generateTerminalLog, 1400);
+    } else {
+        overlay.classList.remove('active');
+        clearInterval(state.terminalLogTimer);
+        state.terminalLogTimer = null;
+        const linesEl = document.getElementById('terminal-log-lines');
+        if (linesEl) linesEl.innerHTML = ''; // 關閉時清空，不留行情殘跡
+    }
+}
+
+// ── Panic Key 監聽：Esc 切換 Boss Key、快速雙擊 Space 切換 Terminal Mode ──
+function initPrivacyControls() {
+    const bossBtn = document.getElementById('btn-boss-key');
+    const termBtn = document.getElementById('btn-terminal-mode');
+    if (bossBtn) bossBtn.addEventListener('click', toggleBossKey);
+    if (termBtn) termBtn.addEventListener('click', toggleTerminalMode);
+
+    let lastSpaceTs = 0;
+    window.addEventListener('keydown', (e) => {
+        // 輸入框/下拉選單中不攔截（保留正常打字行為）
+        const t = e.target;
+        const isFormField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+                                  t.tagName === 'SELECT' || t.isContentEditable);
+
+        if (e.key === 'Escape') {
+            // 終端機模式開啟時，Esc 優先關閉終端機；否則切換 Boss Key
+            if (state.terminalMode) toggleTerminalMode();
+            else toggleBossKey();
+            return;
+        }
+
+        if (e.code === 'Space' && !isFormField) {
+            // 主動阻斷空白鍵的網頁向下滾動（含雙擊時的跳動）
+            e.preventDefault();
+            const now = Date.now();
+            if (now - lastSpaceTs < 400) {
+                lastSpaceTs = 0; // 重置，避免三連擊再次觸發
+                toggleTerminalMode();
+            } else {
+                lastSpaceTs = now;
+            }
+        }
+    });
+}
+
+// ── 盤中委買委賣多空力道對比條 ────────────────────────────────────────────
+function updateStrengthBar(item) {
+    const bidEl = document.getElementById('detail-bid-vol');
+    const askEl = document.getElementById('detail-ask-vol');
+    const pctEl = document.getElementById('detail-strength-pct');
+    const bidBar = document.getElementById('strength-bid');
+    const askBar = document.getElementById('strength-ask');
+    if (!bidEl || !askEl || !bidBar || !askBar) return;
+
+    const bid = Number(item.buy_volume);
+    const ask = Number(item.sell_volume);
+
+    if (!Number.isFinite(bid) || !Number.isFinite(ask) || (bid === 0 && ask === 0)) {
+        bidEl.textContent = '--';
+        askEl.textContent = '--';
+        pctEl.textContent = '盤中無委託資料';
+        bidBar.style.width = '50%';
+        askBar.style.width = '50%';
+        return;
+    }
+
+    const total = bid + ask;
+    const bidPct = (bid / total) * 100;
+    bidEl.textContent = bid.toLocaleString();
+    askEl.textContent = ask.toLocaleString();
+    pctEl.textContent = `買方力道 ${bidPct.toFixed(1)}%`;
+    bidBar.style.width = `${bidPct.toFixed(1)}%`;
+    askBar.style.width = `${(100 - bidPct).toFixed(1)}%`;
+}
+
+// ── 資訊總覽卡片自訂顯示（持久化於 localStorage）─────────────────────────
+function readCardVisibility() {
+    try {
+        return JSON.parse(localStorage.getItem('cardVisibility')) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function applyCardVisibility() {
+    const config = readCardVisibility();
+    document.querySelectorAll('.card[data-card-key]').forEach(card => {
+        const key = card.getAttribute('data-card-key');
+        // 預設顯示；只有被明確設為 false 才隱藏
+        card.classList.toggle('card-hidden', config[key] === false);
+    });
+}
+
+function initCardConfig() {
+    const form = document.getElementById('card-config-form');
+    if (!form) return;
+    const config = readCardVisibility();
+
+    form.querySelectorAll('input[type="checkbox"][data-card-key]').forEach(cb => {
+        const key = cb.getAttribute('data-card-key');
+        cb.checked = config[key] !== false;
+        cb.addEventListener('change', () => {
+            const cfg = readCardVisibility();
+            cfg[key] = cb.checked;
+            localStorage.setItem('cardVisibility', JSON.stringify(cfg));
+            applyCardVisibility();
+        });
+    });
+
+    applyCardVisibility();
 }
 
 // ── 格式化小工具 ────────────────────────────────────────────────────────

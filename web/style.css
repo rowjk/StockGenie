@@ -1188,3 +1188,264 @@ a {
 .app-footer span {
     letter-spacing: 0.3px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   v1.4.0 新增樣式
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Boss Key 隱私遮蔽模式 ─────────────────────────────────────────────── */
+/* 行內金額：原文字縮為 0，以 ::after 顯示遮蔽符號（輪詢更新也不會洩漏） */
+body.boss-mode .mask-money {
+    font-size: 0 !important;
+}
+body.boss-mode .mask-money::after {
+    content: '*****';
+    font-size: 1rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    letter-spacing: 2px;
+}
+
+/* 區塊遮蔽（表格、交割款）：整塊蓋上安全鎖定層 */
+body.boss-mode .mask-block {
+    position: relative;
+}
+body.boss-mode .mask-block::after {
+    content: '***** [DATA MASKED] 資料已遮蔽 *****';
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-secondary);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+}
+
+/* Boss Key 啟用時的按鈕高亮 */
+.btn-icon.privacy-active {
+    color: var(--color-accent);
+    background-color: var(--color-accent-bg);
+}
+
+/* ── Terminal Log Mode（黑底綠字伺服器日誌偽裝）──────────────────────── */
+.terminal-log-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    background-color: #000000;
+    color: #33ff66;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.55;
+    padding: 18px 22px;
+    cursor: default;
+    overflow: hidden;
+}
+.terminal-log-overlay.active {
+    display: flex;
+}
+.terminal-log-header {
+    color: #1fbf50;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+.terminal-log-lines {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.terminal-log-lines .tl-warn { color: #e5c07b; }
+.terminal-log-lines .tl-dim  { color: #1d8f44; }
+.terminal-log-cursor {
+    flex-shrink: 0;
+    animation: tl-blink 1s steps(1) infinite;
+}
+@keyframes tl-blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+
+/* ── T+2 違約交割缺口警示條（低調橘黃）──────────────────────────────── */
+.t2-alert-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 9px 14px;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    border-left: 3px solid #f59e0b;
+    border-radius: 6px;
+    background-color: rgba(245, 158, 11, 0.08);
+    color: #d97706;
+    font-size: 0.85rem;
+}
+[data-theme="dark"] .t2-alert-bar {
+    color: #fbbf24;
+}
+
+/* ── 資訊總覽卡片自訂顯示設定 ─────────────────────────────────────────── */
+.card-config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px 16px;
+    margin-top: 10px;
+}
+.card-config-grid label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.card-config-grid input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+/* 卡片被設定為隱藏 */
+.card.card-hidden {
+    display: none !important;
+}
+
+/* ── 盤中委買委賣多空力道對比條 ──────────────────────────────────────── */
+.strength-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.strength-pct {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+}
+.bid-ask-strength-bar {
+    display: flex;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    background-color: var(--bg-tertiary);
+}
+.bid-ask-strength-bar .strength-bid {
+    background-color: var(--color-up);
+    transition: width var(--transition-normal);
+}
+.bid-ask-strength-bar .strength-ask {
+    background-color: var(--color-down);
+    transition: width var(--transition-normal);
+}
+
+/* ── 自選股重大訊息日誌欄（系統事件 Log 風格）────────────────────────── */
+.announcements-log {
+    max-height: 220px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.7;
+    background-color: var(--bg-tertiary);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.announcements-log .ann-line {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.announcements-log .ann-meta {
+    color: var(--text-muted);
+}
+.announcements-log .ann-code {
+    color: var(--color-accent);
+    font-weight: 600;
+}
+
+/* ── 自選股除權息行事曆 ──────────────────────────────────────────────── */
+.dividends-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.dividend-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: var(--bg-tertiary);
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
+.dividend-item .div-date {
+    font-family: var(--font-mono);
+    color: var(--color-accent);
+    font-weight: 600;
+}
+.dividend-item .div-amount {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+/* ── 駭客任務 The Matrix 顯示風格（強制黑底綠字，不支援淺色背景）──────── */
+/* 置於檔案最末：同特異度下後者勝出，可同時覆蓋 [data-theme] 的主題變數 */
+[data-scheme="matrix"] {
+    --bg-primary: #000000;
+    --bg-secondary: #050f06;
+    --bg-tertiary: #0a1f0d;
+
+    --text-primary: #00ff41;
+    --text-secondary: #00c437;
+    --text-muted: #008426;
+
+    --border-color: #0d3315;
+    --border-hover: #1a5c26;
+
+    --color-up: #00ff41;
+    --color-up-bg: rgba(0, 255, 65, 0.08);
+    --color-down: #1f8a3d;
+    --color-down-bg: rgba(31, 138, 61, 0.10);
+    --color-neutral: #00c437;
+    --color-accent: #00ff41;
+    --color-accent-bg: rgba(0, 255, 65, 0.10);
+
+    --scroll-bg: #050f06;
+    --scroll-thumb: #0d3315;
+
+    --shadow-sm: 0 1px 2px 0 rgba(0, 255, 65, 0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0, 255, 65, 0.08), 0 2px 4px -1px rgba(0, 255, 65, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 255, 65, 0.10), 0 4px 6px -2px rgba(0, 255, 65, 0.08);
+}
+
+/* 數值輝光與等寬字，營造終端機感 */
+[data-scheme="matrix"] .metric-value {
+    font-family: var(--font-mono);
+    text-shadow: 0 0 8px rgba(0, 255, 65, 0.45);
+}
+[data-scheme="matrix"] .card {
+    box-shadow: inset 0 0 14px rgba(0, 255, 65, 0.04);
+}
+[data-scheme="matrix"] .card-title {
+    text-shadow: 0 0 6px rgba(0, 255, 65, 0.30);
+}
+
+/* Matrix 風格下被鎖定的主題切換按鈕 */
+.btn-icon:disabled {
+    opacity: 0.30;
+    cursor: not-allowed;
+    pointer-events: auto; /* 保留 hover 以顯示 tooltip 說明原因 */
+}
