@@ -799,7 +799,7 @@ a {
 
 .watchlist-price-block {
     flex-shrink: 0;
-    width: 80px;
+    width: 140px; /* 個股改為「點數 (百分比)」雙顯示後加寬，與指數一致防折行 */
     text-align: right;
     display: flex;
     flex-direction: column;

@@ -4,6 +4,8 @@
 
 v1.4 起聚焦證券帳戶（期貨功能退場），並強化辦公室防窺體系：一鍵隱私遮蔽（Boss Key）、終端機日誌看盤模式（Terminal Log Mode）、駭客任務 Matrix 顯示風格，以及 TWSE 重大訊息與除權息行事曆看板、已實現月度損益圖表、歷史數據匯出/匯入安全校驗等功能。
 
+v1.5 起新增「美股自選監控」獨立分頁：透過後端代理 Yahoo Finance 公開行情（延遲約 15 分鐘、免 API 金鑰），支援任意美股代碼（指數/個股/ETF）的新增、移除、排序與 localStorage 持久化，並提供與台股自選一致的明細面板（開高低收、MA5/20/60/240、分時與均線圖表）。
+
 ---
 
 ## 🔌 技術基礎與永豐 API 整合
@@ -34,6 +36,7 @@ graph TD
 
     RemoteSinoPac["永豐 API 伺服器 雲端"]:::remote
     RemoteTWSE["TWSE OpenAPI 公開資訊 雲端"]:::remote
+    RemoteYahoo["Yahoo Finance 美股行情 雲端"]:::remote
 
     %% Relationships
     Browser -->|"1. 載入網頁資源"| PyServer
@@ -45,6 +48,7 @@ graph TD
     
     ShioajiServer <-->|"6. 憑證驗證與委託下單"| RemoteSinoPac
     PyServer -->|"7. 重大訊息與除權息查詢（快取 10 分鐘）"| RemoteTWSE
+    PyServer -->|"8. 美股行情查詢（盤中快取 60 秒 / 日線快取 30 分鐘）"| RemoteYahoo
 ```
 
 ---
@@ -65,7 +69,7 @@ graph TD
 ## 🗂️ 專案實體代碼結構
 
 * 🚀 **[啟動儀表板.bat](./啟動儀表板.bat)**：雙擊即可一鍵啟動後端代理伺服器與 Shioaji API。
-* 🐍 **[dashboard.py](./dashboard.py)**：Python 後端。提供靜態資源、`/proxy/` 反向代理（含 `profit_loss` 預設 365 天參數補充、上游錯誤排障日誌、帳務端點 30 秒等待）、`/api/asset-history` 歷史資產讀寫（含匯入嚴格校驗與 `.bak` 備份）、`/api/twse-announcements` 與 `/api/twse-dividends` TWSE 公開資訊查詢（快取 10 分鐘、自動處理 TWSE 憑證鏈問題），並於啟動時預檢 CA 憑證存在性。
+* 🐍 **[dashboard.py](./dashboard.py)**：Python 後端。提供靜態資源、`/proxy/` 反向代理（含 `profit_loss` 預設 365 天參數補充、上游錯誤排障日誌、帳務端點 30 秒等待）、`/api/asset-history` 歷史資產讀寫（含匯入嚴格校驗與 `.bak` 備份）、`/api/twse-announcements` 與 `/api/twse-dividends` TWSE 公開資訊查詢（快取 10 分鐘、自動處理 TWSE 憑證鏈問題）、`/api/us-chart` 美股行情 Yahoo Finance 代理（代碼格式驗證、盤中快取 60 秒/日線快取 30 分鐘、gzip 壓縮傳輸），並於啟動時預檢 CA 憑證存在性。
 * 🖥️ **[web/index.html](./web/index.html)**：前端網頁結構，包含自訂確認 Modal、Boss Key / Terminal Mode 切換鈕、T+2 警戒條、卡片顯示設定表單、終端機日誌 Overlay。
 * 🎨 **[web/style.css](./web/style.css)**：外觀樣式表（含 Slate / Stealth / Muted / **Matrix** 四種配色變數、遮蔽模式與終端機 Overlay 樣式）。
 * ⚙️ **[web/app.js](./web/app.js)**：網頁交互邏輯。並行帳務輪詢、Canvas 圖表（資產趨勢 / 已實現月度損益 / 分時 / 均線 / Sparkline）、Boss Key 與 Terminal Mode 隱私防護、鍵盤快捷鍵（Esc / 雙擊 Space）、自選 20 檔上限與每 10 檔分批快照、委買賣力道條、TWSE 看板渲染、JSON 匯出匯入。
@@ -88,13 +92,25 @@ graph TD
 ## ⚠️ 系統開發與版本更動守則
 
 為了落實專案的追蹤與管理，本專案特別制定以下規範：
-* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.4.6`）。請在修改完成後，主動更新：
+* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.5.0`）。請在修改完成後，主動更新：
   1. [index.html](./web/index.html) 的頁尾 Footer 版本標籤。
   2. 本 [README.md](./README.md) 的版本表記與指引說明。
 
 ---
 
 ## 📋 版本更新紀錄
+
+### 📅 2026-06-10 (v1.5.0)
+
+* **v1.5.0** - **美股自選監控分頁**：
+  * **獨立「美股指數」分頁**：側邊欄新增地球圖示分頁，與台股自選完全分離。免 API 金鑰，透過後端 `/api/us-chart` 代理 Yahoo Finance 公開 chart API 取得行情（延遲約 15 分鐘，行情卡片上有明確標註）。
+  * **任意代碼自選管理**：搜尋框輸入任意美股代碼（如 `AAPL`、`QQQ`、`BRK-B`、`^DJI`）即可加入監控，商品名稱自動帶入；支援 ▲▼ 排序、明細卡垃圾桶移除，清單存於 localStorage（`usWatchlist`），預設帶入 `^GSPC` 與 `VOO`，上限 20 檔。
+  * **完整明細面板**：比照台股自選提供昨收、開高低收、成交量、MA5/20/60/240 數值格，以及分時走勢圖（5 分 K）與均線走勢圖（2 年日線，顯示近 1 年）雙 tab 圖表，繪圖風格與台股一致（含 Matrix / Stealth 配色適配與 Boss Key 遮蔽）。
+  * **指數與個股樣式區分**：依 Yahoo `instrumentType` 判別（行情未載入時以 `^` 前綴回退判斷），指數套用淡灰底專屬樣式，與台股 `IND` 處理邏輯對齊。
+  * **後端安全與快取設計**：商品代碼採格式驗證（1-12 字元，限大寫字母/數字/`.^-=`，小寫自動轉大寫），僅代理固定查詢組合（盤中 `1d/5m` 快取 60 秒、日線 `2y/1d` 快取 30 分鐘），不構成開放代理；查無代碼回 404、非法格式回 400、上游失敗回退快取舊資料。
+  * **流量節約輪詢**：美股行情每 60 秒輪詢一次，且僅在「美股指數」分頁開啟時運作；切換至其他分頁或網頁進入背景（Page Visibility）即自動停止。
+  * **漲跌徽章格式統一**：台股與美股的個股、ETF 漲跌徽章升級為與指數相同的「漲跌點數 (漲跌百分比)」雙顯示格式（如 `+13.50 (+1.26%)`），價格區塊寬度由 80px 統一加寬至 140px 防止折行。
+  * **台股 tab 綁定範圍修正**：原分時/均線 tab 切換為全域綁定 `.detail-tab`，現限定於 `#view-watchlist` 範圍，避免與美股分頁的同名元件互相干擾（台股行為不變）。
 
 ### 📅 2026-06-10 (v1.4.0 至 v1.4.6)
 

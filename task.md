@@ -1,4 +1,16 @@
-# StockGenie - 實行任務與優化清單 (v1.4.6)
+# StockGenie - 實行任務與優化清單 (v1.5.0)
+
+## v1.5.0 — 美股自選監控分頁
+- [x] 後端新增 `/api/us-chart` Yahoo Finance 代理路由：代碼格式驗證（1-12 字元，限大寫字母/數字/`.^-=`）、固定查詢組合（盤中 1d/5m 快取 60 秒、日線 2y/1d 快取 30 分鐘）、gzip 傳輸、查無代碼回 404、上游失敗回退快取 ([dashboard.py](dashboard.py))
+- [x] 側邊欄新增「美股指數」分頁（地球圖示）與美股自選 view section：搜尋框、清單容器、明細卡（開高低收/量/MA 數值格、分時與均線雙 tab 圖表、移除按鈕） ([index.html](web/index.html))
+- [x] 美股自選管理：任意代碼新增（名稱自動帶入）、垃圾桶移除、▲▼ 排序、localStorage（`usWatchlist`）持久化、預設 `^GSPC`+`VOO`、上限 20 檔 ([app.js](web/app.js))
+- [x] 美股明細圖表：分時走勢（當日 5 分 K）與均線走勢（2 年日線、MA5/20/60/240），繪圖風格與台股一致，支援 Boss Key 遮蔽與全配色 ([app.js](web/app.js))
+- [x] 輪詢節流：美股行情每 60 秒更新，僅於美股分頁開啟且網頁前景時運作（Page Visibility 整合） ([app.js](web/app.js))
+- [x] 指數/個股樣式區分：依 Yahoo `instrumentType`（INDEX 套淡灰底），行情未載入時以 `^` 前綴回退判斷 ([app.js](web/app.js))
+- [x] 漲跌徽章格式統一：台股與美股個股/ETF 升級為「漲跌點數 (漲跌百分比)」雙顯示，價格區塊 80px → 140px 防折行 ([app.js](web/app.js), [style.css](web/style.css))
+- [x] 修正台股分時/均線 tab 全域綁定問題：限定 `#view-watchlist` 範圍，避免與美股分頁同名元件互相干擾 ([app.js](web/app.js))
+- [x] 驗證：任意代碼（AAPL/QQQ）200、小寫自動轉大寫、查無代碼 404、非法格式 400、快取命中、JS/Python 語法檢查
+- [x] 配合專案規範，升級版本號至 v1.5.0 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.4.6 — 移除安全驗證問題提示標籤
 - [x] 於 `index.html` 移除 `問題：機車+生命靈數` 文字標籤，以提升防護機制隱蔽性 ([index.html](web/index.html))
