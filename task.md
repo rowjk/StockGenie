@@ -1,25 +1,19 @@
-# SinoPac Genie - 自選股排版與排序優化任務清單 (v1.3.23)
+# SinoPac Genie - 實行任務與優化清單 (v1.3.25)
 
-- [x] 1. 前端樣式調整 ([style.css](file:///d:/AntigravityProjects/SinoPac_API/web/style.css))
-  - [x] 新增自選股微型排序控制項樣式（▲ / ▼，預設半透明，Hover 顯色）
-  - [x] 新增指數卡片專屬底色 `.watchlist-item-index`（使用 `--bg-tertiary`）
-  - [x] 擴充指數價格區塊寬度至 `140px` 以容納點數差值與百分比，防止換行跑版
-  - [x] 優化自選監控卡片在寬螢幕下的走勢圖置中與 margins 排版，防止擠在最右邊
-  - [x] 新增 `.watchlist-order-btn-placeholder` 佔位符樣式（寬度 `42px`），提供大盤指數右側間隔
-  - [x] 修正隱形黑白模式下，大盤指數卡片的漲跌幅徽章背景色（與卡片背景色重疊融合）之對比度，將指數徽章背景色強制指定為 `bg-secondary`
-- [x] 2. 前端邏輯實作 ([app.js](file:///d:/AntigravityProjects/SinoPac_API/web/app.js))
-  - [x] 實作排序移動函數 `moveWatchlistItemUp(index)` 與 `moveWatchlistItemDown(index)`
-  - [x] 修改 `renderWatchlist`：渲染排序箭頭並綁定點擊事件（阻斷冒泡）
-  - [x] 修改 `renderWatchlist`：對於指數商品（`security_type === 'IND'`）加上 `watchlist-item-index` 樣式
-  - [x] 修改 `renderWatchlist`：對於指數商品格式化漲跌幅字串為 `漲跌點數 (漲跌百分比)`，採用快照中 `change_price` 欄位
-  - [x] 新增 `resize` 事件監聽器：視窗寬度改變時自動 debounce 重繪微型走勢圖，防止拉伸變形
-  - [x] 修改 `renderWatchlist`：對於指數商品（無下單按鈕），在最右側加入 `watchlist-order-btn-placeholder` 佔位符，使價格區塊與股票卡片對齊
-- [x] 3. 版本號升級 (v1.3.23) 與文件更新
-  - [x] 更新 [index.html](file:///d:/AntigravityProjects/SinoPac_API/web/index.html) 頁尾版號與 CSS/JS 快取尾綴至 `v1.3.23`
-  - [x] 更新 [app.js](file:///d:/AntigravityProjects/SinoPac_API/web/app.js) 檔頭版本歷史
-  - [x] 更新 [README.md](file:///d:/AntigravityProjects/SinoPac_API/README.md) 開發守則版號與版本更新紀錄
-  - [x] 更新 [walkthrough.md](file:///d:/AntigravityProjects/SinoPac_API/walkthrough.md) 使用指引，加入排序與大盤點數說明
-  - [x] 更新 [code_review.md](file:///d:/AntigravityProjects/SinoPac_API/code_review.md) 報告版號與結論
-- [x] 4. Git 提交與推送
+- [x] 1. 停用伺服器端靜態檔案快取 ([dashboard.py](file:///d:/AntigravityProjects/SinoPac_API/dashboard.py))
+  - [x] 於 `DashboardHandler.end_headers()` 中新增 `Cache-Control`、`Pragma`、`Expires` 標頭，徹底解決瀏覽器快取 HTML/CSS/JS 的問題。
+- [x] 2. 前端樣式微調與對比度修正 ([style.css](file:///d:/AntigravityProjects/SinoPac_API/web/style.css))
+  - [x] 擴充 stealth 隱形黑白模式按鈕的對比度規則，加入 `.detail-tab:hover` 及特定按鈕 ID (`#btn-quick-order`, `#btn-add-watchlist`, `#btn-confirm-submit`)，將文字顏色強制設為 `var(--bg-primary)`
+- [x] 3. 前端結構與標籤優化 ([index.html](file:///d:/AntigravityProjects/SinoPac_API/web/index.html))
+  - [x] 修改自選標題開關標籤，將「顯示走勢圖」正式修訂為「顯示趨勢圖」並加入說明 Tooltip。
+  - [x] 移除 `#btn-confirm-submit` 的冗餘行內樣式，防止其干擾 CSS 主題覆寫。
+  - [x] 於 `<head>` 區段新增防快取 `meta` 標籤。
+  - [x] 將 CSS 與 JS 的快取參數升級至 `v=1.3.25`。
+- [x] 4. 前端指令更新 ([app.js](file:///d:/AntigravityProjects/SinoPac_API/web/app.js))
+  - [x] 於 app.js 檔頭歷史記錄中新增 `v1.3.25` 之更新說明。
+- [x] 5. 變更紀錄與說明文件更新
+  - [x] 更新 `walkthrough.md` 以及 `task.md` 說明內容。
+- [x] 6. Git 提交與推送
   - [x] 執行 `git add .` 與 `git commit`
   - [x] 執行 `git push` 同步至遠端倉庫
+
