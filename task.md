@@ -1,4 +1,9 @@
-# StockGenie - 實行任務與優化清單 (v1.5.0)
+# StockGenie - 實行任務與優化清單 (v1.5.1)
+
+## v1.5.1 — 跨分頁行情輪詢降頻
+- [x] 停在美股分頁時暫停台股自選快照輪詢（`fetchData` 依 `state.activeView` 判斷），帳務 API 與 T+2 警示照常 ([app.js](web/app.js))
+- [x] 離開美股分頁時立即補抓一次台股自選快照，避免舊報價殘留 ([app.js](web/app.js))
+- [x] 配合專案規範，升級版本號至 v1.5.1 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.5.0 — 美股自選監控分頁
 - [x] 後端新增 `/api/us-chart` Yahoo Finance 代理路由：代碼格式驗證（1-12 字元，限大寫字母/數字/`.^-=`）、固定查詢組合（盤中 1d/5m 快取 60 秒、日線 2y/1d 快取 30 分鐘）、gzip 傳輸、查無代碼回 404、上游失敗回退快取 ([dashboard.py](dashboard.py))
