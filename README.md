@@ -10,9 +10,7 @@
 
 ---
 
-## 🏗️ 系統架構與邏輯流程
-
-### 1. 系統架構圖 (System Architecture)
+## 🏗️ 系統架構圖 (System Architecture)
 本系統採用「瀏覽器前端 (Web UI)」、「本地 Python 伺服器 (Web Proxy & Backend)」以及「Shioaji 守護進程 (Shioaji Daemon)」的三層式架構：
 
 ```mermaid
@@ -24,17 +22,17 @@ graph TD
     classDef remote fill:#1e293b,stroke:#f59e0b,stroke-width:1px,color:#f8fafc,stroke-dasharray: 5 5;
 
     %% Nodes
-    Browser["瀏覽器前端 (Web UI)<br/>Port 8081"]:::browser
+    Browser["瀏覽器前端 (Web UI)"]:::browser
 
-    subgraph 本地主機 (Local Host)
-        PyServer["Python 後端服務 (dashboard.py)<br/>Port 8081"]:::pyServer
+    subgraph "本地主機 (Local Host)"
+        PyServer["Python 後端服務 (dashboard.py)"]:::pyServer
         
-        ShioajiServer["Shioaji API 守護進程 (shioaji.exe)<br/>Port 8080"]:::localDaemon
+        ShioajiServer["Shioaji API 守護進程 (shioaji.exe)"]:::localDaemon
         
-        JsonDB[("資產歷史記錄<br/>(asset_history.json)")]:::pyServer
+        JsonDB[("資產歷史記錄 (asset_history.json)")]:::pyServer
     end
 
-    RemoteSinoPac["永豐 API 伺服器 (雲端)<br/>(SinoPac Remote API)"]:::remote
+    RemoteSinoPac["永豐 API 伺服器 (雲端)"]:::remote
 
     %% Relationships
     Browser -->|1. 載入網頁資源 (HTML/CSS/JS)| PyServer
@@ -45,42 +43,6 @@ graph TD
     PyServer -->|4. 代理轉發 (API Proxy)| ShioajiServer
     
     ShioajiServer <-->|5. 證券憑證驗證 & 委託下單 / 訂閱即時行情| RemoteSinoPac
-```
-
-### 2. 啟動與輪詢邏輯時序圖 (Startup & Polling Flow)
-描述當使用者雙擊啟動腳本後，系統各模組的初始化、自動就緒檢測以及主輪詢循環之流向：
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 使用者
-    participant Bat as 啟動儀表板.bat
-    participant Py as Python 後端 (dashboard.py)
-    participant Shio as Shioaji 伺服器 (shioaji.exe)
-    participant Web as 瀏覽器前端 (app.js)
-    participant Sino as 永豐雲端伺服器
-
-    User->>Bat: 雙擊啟動
-    Bat->>Py: 執行 python dashboard.py
-    Py->>Py: 載入 .env 設定檔
-    Py->>Shio: 背景啟動 Shioaji (帶入金鑰與憑證密碼)
-    Py->>Py: 啟動 Web 伺服器 (Port 8081)
-    loop 輪詢檢測
-        Py->>Shio: 檢測是否就緒 (Port 8080)
-    end
-    Shio-->>Py: 就緒成功
-    Py->>Web: 自動開啟瀏覽器載入網頁
-
-    rect rgb(20, 30, 45)
-        note right of Web: 系統主循環 (每 15 秒輪詢)
-        Web->>Py: 請求轉發行情與資金 API (/proxy/*)
-        Py->>Shio: 轉發至本地 Shioaji API
-        Shio->>Sino: 雲端查詢報價/資金
-        Sino-->>Shio: 回傳最新數據
-        Shio-->>Py: 回傳數據
-        Py-->>Web: 回傳數據
-        Web->>Web: 更新介面與渲染走勢/歷史圖表
-    end
 ```
 
 ---
