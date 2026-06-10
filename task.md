@@ -1,4 +1,4 @@
-# SinoPac Genie - 自選股排版與排序優化任務清單 (v1.3.22)
+# SinoPac Genie - 自選股排版與排序優化任務清單 (v1.3.23)
 
 - [x] 1. 前端樣式調整 ([style.css](file:///d:/AntigravityProjects/SinoPac_API/web/style.css))
   - [x] 新增自選股微型排序控制項樣式（▲ / ▼，預設半透明，Hover 顯色）
@@ -6,6 +6,7 @@
   - [x] 擴充指數價格區塊寬度至 `140px` 以容納點數差值與百分比，防止換行跑版
   - [x] 優化自選監控卡片在寬螢幕下的走勢圖置中與 margins 排版，防止擠在最右邊
   - [x] 新增 `.watchlist-order-btn-placeholder` 佔位符樣式（寬度 `42px`），提供大盤指數右側間隔
+  - [x] 修正隱形黑白模式下，大盤指數卡片的漲跌幅徽章背景色（與卡片背景色重疊融合）之對比度，將指數徽章背景色強制指定為 `bg-secondary`
 - [x] 2. 前端邏輯實作 ([app.js](file:///d:/AntigravityProjects/SinoPac_API/web/app.js))
   - [x] 實作排序移動函數 `moveWatchlistItemUp(index)` 與 `moveWatchlistItemDown(index)`
   - [x] 修改 `renderWatchlist`：渲染排序箭頭並綁定點擊事件（阻斷冒泡）
@@ -13,8 +14,8 @@
   - [x] 修改 `renderWatchlist`：對於指數商品格式化漲跌幅字串為 `漲跌點數 (漲跌百分比)`，採用快照中 `change_price` 欄位
   - [x] 新增 `resize` 事件監聽器：視窗寬度改變時自動 debounce 重繪微型走勢圖，防止拉伸變形
   - [x] 修改 `renderWatchlist`：對於指數商品（無下單按鈕），在最右側加入 `watchlist-order-btn-placeholder` 佔位符，使價格區塊與股票卡片對齊
-- [x] 3. 版本號升級 (v1.3.22) 與文件更新
-  - [x] 更新 [index.html](file:///d:/AntigravityProjects/SinoPac_API/web/index.html) 頁尾版號與 CSS/JS 快取尾綴至 `v1.3.22`
+- [x] 3. 版本號升級 (v1.3.23) 與文件更新
+  - [x] 更新 [index.html](file:///d:/AntigravityProjects/SinoPac_API/web/index.html) 頁尾版號與 CSS/JS 快取尾綴至 `v1.3.23`
   - [x] 更新 [app.js](file:///d:/AntigravityProjects/SinoPac_API/web/app.js) 檔頭版本歷史
   - [x] 更新 [README.md](file:///d:/AntigravityProjects/SinoPac_API/README.md) 開發守則版號與版本更新紀錄
   - [x] 更新 [walkthrough.md](file:///d:/AntigravityProjects/SinoPac_API/walkthrough.md) 使用指引，加入排序與大盤點數說明

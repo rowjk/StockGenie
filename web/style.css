@@ -749,6 +749,12 @@ a {
 .watchlist-item.watchlist-item-index .watchlist-price-block {
     width: 140px;
 }
+.watchlist-item.watchlist-item-index .badge-up {
+    background-color: var(--bg-secondary);
+}
+.watchlist-item.watchlist-item-index .badge-down {
+    background-color: var(--bg-secondary);
+}
 
 .watchlist-info {
     display: flex;
