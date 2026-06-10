@@ -374,6 +374,38 @@ a {
     opacity: 1;
 }
 
+/* ── 自選股列表排序按鈕 ── */
+.watchlist-order-actions {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    margin-right: 8px;
+    flex-shrink: 0;
+    opacity: 0.25;
+    transition: opacity 0.15s;
+}
+.watchlist-item:hover .watchlist-order-actions {
+    opacity: 0.85;
+}
+.watchlist-order-actions button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 9px;
+    padding: 1px 3px;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.15s;
+}
+.watchlist-order-actions button:hover:not([disabled]) {
+    color: var(--text-primary);
+}
+.watchlist-order-actions button[disabled] {
+    cursor: not-allowed;
+    opacity: 0.2;
+}
+
 /* ── 自選股明細圖表 Tab ── */
 .detail-chart-tabs {
     display: flex;
@@ -705,6 +737,13 @@ a {
 .watchlist-item:hover {
     border-color: var(--border-hover);
     transform: translateY(-1px);
+}
+
+.watchlist-item.watchlist-item-index {
+    background-color: var(--bg-tertiary);
+}
+.watchlist-item.watchlist-item-index .watchlist-price-block {
+    width: 140px;
 }
 
 .watchlist-info {
