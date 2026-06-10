@@ -1,4 +1,9 @@
-# StockGenie - 實行任務與優化清單 (v1.4.2)
+# StockGenie - 實行任務與優化清單 (v1.4.3)
+
+## v1.4.3 — 歷史資產備份與 TWSE 併發警告修正
+- [x] 修正手動導入歷史資產與每日自動 Pruning 90 天清理之設計衝突，限制總筆數大於 1000 筆才啟動清理且清理範圍放寬至 365 天 ([dashboard.py](dashboard.py))
+- [x] 修正 TWSE 憑證鏈 SSLError 降級警告之執行緒安全問題，使用 `_twse_cache_lock` 鎖定避免多重列印 ([dashboard.py](dashboard.py))
+- [x] 配合專案規範，升級版本號至 v1.4.3 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.4.2 — Matrix 風格與損益圖優化
 - [x] 新增「駭客任務 The Matrix」配色：黑底螢光綠、數值輝光、全 Canvas 圖表綠化 ([style.css](web/style.css), [app.js](web/app.js), [index.html](web/index.html))
