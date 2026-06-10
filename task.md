@@ -1,4 +1,8 @@
-# StockGenie - 實行任務與優化清單 (v1.4.5)
+# StockGenie - 實行任務與優化清單 (v1.4.6)
+
+## v1.4.6 — 移除安全驗證問題提示標籤
+- [x] 於 `index.html` 移除 `問題：機車+生命靈數` 文字標籤，以提升防護機制隱蔽性 ([index.html](web/index.html))
+- [x] 配合專案規範，升級版本號至 v1.4.6 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.4.5 — 系統設定問答防護驗證
 - [x] 於 `index.html` 新增安全驗證對話框 HTML 結構 ([index.html](web/index.html))
