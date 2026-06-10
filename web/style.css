@@ -373,6 +373,10 @@ a {
 .watchlist-item:hover .watchlist-order-btn {
     opacity: 1;
 }
+.watchlist-order-btn-placeholder {
+    flex-shrink: 0;
+    width: 42px;
+}
 
 /* ── 自選股列表排序按鈕 ── */
 .watchlist-order-actions {

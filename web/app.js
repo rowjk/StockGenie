@@ -2,6 +2,8 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.22 (2026-06-10)
+   - [排版] 新增自選指數商品卡片最右側的預留佔位區塊（Placeholder），使無下單按鈕的大盤指數價格區塊能與其他普通股票對齊
    v1.3.21 (2026-06-10)
    - [排版] 優化自選監控卡片於寬螢幕下的排版對齊，使微型走勢圖（Sparkline）優雅置中，並增加視窗 resize 時重繪走勢圖的防禦機制
    v1.3.20 (2026-06-10)
@@ -873,7 +875,7 @@ function renderWatchlist() {
         const rateClass = rateVal > 0 ? 'badge-up' : (rateVal < 0 ? 'badge-down' : 'metric-subtitle');
         
         const orderBtnHtml = isIndex 
-            ? '' 
+            ? `<div class="watchlist-order-btn-placeholder"></div>` 
             : `<button class="watchlist-order-btn" title="開啟下單面板">下單</button>`;
 
         const upDisabled = index === 0 ? 'disabled style="visibility:hidden;"' : '';
