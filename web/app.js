@@ -2,6 +2,9 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.20 (2026-06-10)
+   - [自選] 支援自選監控清單自訂排序，於卡片左側提供微型上移（▲）/下移（▼）按鈕
+   - [大盤] 大盤指數（IND）卡片加上淡灰底色，且漲跌幅徽章調整為顯示「漲跌點數 (漲跌百分比)」
    v1.3.19 (2026-06-10)
    - [大盤] 支援大盤加權指數 (TSE001 / 001) 的監控與圖表繪製，自選股新增時自動 fallback 支援 IND 合約，並自動隱藏其交易下單按鈕
    v1.3.18 (2026-06-10)
@@ -835,21 +838,41 @@ function renderWatchlist() {
         return;
     }
     
-    state.watchlist.forEach(item => {
+    state.watchlist.forEach((item, index) => {
         const div = document.createElement('div');
         div.className = 'watchlist-item';
+        const isIndex = item.security_type === 'IND';
+        if (isIndex) {
+            div.classList.add('watchlist-item-index');
+        }
         div.onclick = () => selectWatchlistItem(item.code);
         
         const priceStr = item.close ? item.close.toFixed(2) : '--';
         const rateVal = item.change_rate || 0;
-        const rateStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
+        
+        let rateStr = '';
+        if (isIndex) {
+            const diffVal = item.change_price ?? (item.close && item.reference ? item.close - item.reference : null);
+            const diffStr = diffVal != null ? `${diffVal >= 0 ? '+' : ''}${diffVal.toFixed(2)}` : '--';
+            const ratePctStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
+            rateStr = `${diffStr} (${ratePctStr})`;
+        } else {
+            rateStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
+        }
         const rateClass = rateVal > 0 ? 'badge-up' : (rateVal < 0 ? 'badge-down' : 'metric-subtitle');
         
-        const orderBtnHtml = item.security_type === 'IND' 
+        const orderBtnHtml = isIndex 
             ? '' 
             : `<button class="watchlist-order-btn" title="開啟下單面板">下單</button>`;
 
+        const upDisabled = index === 0 ? 'disabled style="visibility:hidden;"' : '';
+        const downDisabled = index === state.watchlist.length - 1 ? 'disabled style="visibility:hidden;"' : '';
+
         div.innerHTML = `
+            <div class="watchlist-order-actions">
+                <button class="watchlist-order-up" ${upDisabled} title="上移">▲</button>
+                <button class="watchlist-order-down" ${downDisabled} title="下移">▼</button>
+            </div>
             <div class="watchlist-info">
                 <span class="watchlist-code">${item.code}</span>
                 <span class="watchlist-name">${item.name || '讀取中...'}</span>
@@ -862,6 +885,22 @@ function renderWatchlist() {
             ${orderBtnHtml}
         `;
         container.appendChild(div);
+
+        // 排序按鈕點擊事件（阻斷冒泡）
+        const btnUp = div.querySelector('.watchlist-order-up');
+        const btnDown = div.querySelector('.watchlist-order-down');
+        if (btnUp) {
+            btnUp.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveWatchlistItemUp(index);
+            });
+        }
+        if (btnDown) {
+            btnDown.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveWatchlistItemDown(index);
+            });
+        }
 
         // 下單按鈕：不觸發 selectWatchlistItem
         const orderBtn = div.querySelector('.watchlist-order-btn');
@@ -876,6 +915,24 @@ function renderWatchlist() {
         const canvas = document.getElementById(`spark-${item.code}`);
         drawSparkline(canvas, item.prices, rateVal >= 0);
     });
+}
+
+function moveWatchlistItemUp(index) {
+    if (index <= 0) return;
+    const temp = state.watchlist[index];
+    state.watchlist[index] = state.watchlist[index - 1];
+    state.watchlist[index - 1] = temp;
+    saveWatchlistLocal();
+    renderWatchlist();
+}
+
+function moveWatchlistItemDown(index) {
+    if (index >= state.watchlist.length - 1) return;
+    const temp = state.watchlist[index];
+    state.watchlist[index] = state.watchlist[index + 1];
+    state.watchlist[index + 1] = temp;
+    saveWatchlistLocal();
+    renderWatchlist();
 }
 
 function drawSparkline(canvas, prices, isUp) {
