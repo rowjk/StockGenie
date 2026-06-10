@@ -1,6 +1,87 @@
-# SinoPac Genie
+# StockGenie
 
-本專案為專門為辦公室環境設計的**「低調、防窺、高質感」**永豐證券股票交易與資產監控儀表板。外觀精緻偽裝成系統效能監控工具，並擁有安全鎖與自訂確認彈窗雙重保障，防止任何下單交易誤會。為了方便您查閱專案的所有規格與說明書，本文件將所有相關檔案與文檔整理並索引如下：
+本專案為專門為辦公室環境設計的**「低調、防窺、高質感」**永豐證券股票交易與資產監控儀表板。外觀精緻偽裝成系統效能監控工具，並擁有安全鎖與自訂確認彈窗雙重保障，防止任何下單交易誤會。
+
+---
+
+## 🔌 技術基礎與永豐 API 整合
+本專案的行情與交易下單核心完全基於永豐金證券推出的開源 Python 交易套件 **[Shioaji](https://github.com/Sinotrade/Shioaji)**。
+本系統透過本地端執行 `shioaji.exe` 的 daemon 守護進程，並由 `dashboard.py` 提供一個極簡且高安全性的 Web Proxy 代理通道，串接網頁前端與 Shioaji SDK 的實體運作。
+
+---
+
+## 🏗️ 系統架構與邏輯流程
+
+### 1. 系統架構圖 (System Architecture)
+本系統採用「瀏覽器前端 (Web UI)」、「本地 Python 伺服器 (Web Proxy & Backend)」以及「Shioaji 守護進程 (Shioaji Daemon)」的三層式架構：
+
+```mermaid
+graph TD
+    %% Styling
+    classDef browser fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef pyServer fill:#1e293b,stroke:#a855f7,stroke-width:2px,color:#f8fafc;
+    classDef localDaemon fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
+    classDef remote fill:#1e293b,stroke:#f59e0b,stroke-width:1px,color:#f8fafc,stroke-dasharray: 5 5;
+
+    %% Nodes
+    Browser["瀏覽器前端 (Web UI)<br/>Port 8081"]:::browser
+
+    subgraph 本地主機 (Local Host)
+        PyServer["Python 後端服務 (dashboard.py)<br/>Port 8081"]:::pyServer
+        
+        ShioajiServer["Shioaji API 守護進程 (shioaji.exe)<br/>Port 8080"]:::localDaemon
+        
+        JsonDB[("資產歷史記錄<br/>(asset_history.json)")]:::pyServer
+    end
+
+    RemoteSinoPac["永豐 API 伺服器 (雲端)<br/>(SinoPac Remote API)"]:::remote
+
+    %% Relationships
+    Browser -->|1. 載入網頁資源 (HTML/CSS/JS)| PyServer
+    Browser -->|2. 讀寫帳戶歷史資產數據| PyServer
+    PyServer -->|讀寫 JSON| JsonDB
+    
+    Browser -->|3. 轉發行情/交易請求 (/proxy/*)| PyServer
+    PyServer -->|4. 代理轉發 (API Proxy)| ShioajiServer
+    
+    ShioajiServer <-->|5. 證券憑證驗證 & 委託下單 / 訂閱即時行情| RemoteSinoPac
+```
+
+### 2. 啟動與輪詢邏輯時序圖 (Startup & Polling Flow)
+描述當使用者雙擊啟動腳本後，系統各模組的初始化、自動就緒檢測以及主輪詢循環之流向：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 使用者
+    participant Bat as 啟動儀表板.bat
+    participant Py as Python 後端 (dashboard.py)
+    participant Shio as Shioaji 伺服器 (shioaji.exe)
+    participant Web as 瀏覽器前端 (app.js)
+    participant Sino as 永豐雲端伺服器
+
+    User->>Bat: 雙擊啟動
+    Bat->>Py: 執行 python dashboard.py
+    Py->>Py: 載入 .env 設定檔
+    Py->>Shio: 背景啟動 Shioaji (帶入金鑰與憑證密碼)
+    Py->>Py: 啟動 Web 伺服器 (Port 8081)
+    loop 輪詢檢測
+        Py->>Shio: 檢測是否就緒 (Port 8080)
+    end
+    Shio-->>Py: 就緒成功
+    Py->>Web: 自動開啟瀏覽器載入網頁
+
+    rect rgb(20, 30, 45)
+        note right of Web: 系統主循環 (每 15 秒輪詢)
+        Web->>Py: 請求轉發行情與資金 API (/proxy/*)
+        Py->>Shio: 轉發至本地 Shioaji API
+        Shio->>Sino: 雲端查詢報價/資金
+        Sino-->>Shio: 回傳最新數據
+        Shio-->>Py: 回傳數據
+        Py-->>Web: 回傳數據
+        Web->>Web: 更新介面與渲染走勢/歷史圖表
+    end
+```
 
 ---
 
@@ -42,7 +123,7 @@
 ## ⚠️ 系統開發與版本更動守則
 
 為了落實專案的追蹤與管理，本專案特別制定以下規範：
-* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.3.24`）。請在修改完成後，主動更新：
+* **版本號同步更新限制**：未來在進行任何系統功能升級、修補 bug 或修改程式碼時，**版本號必須同步跟著更新**（目前版本為 `v1.3.25`）。請在修改完成後，主動更新：
   1. [index.html](./web/index.html) 的頁尾 Footer 版本標籤。
   2. 本 [README.md](./README.md) 的版本表記與指引說明。
 
@@ -50,68 +131,65 @@
 
 ## 📋 版本更新紀錄
 
-### v1.3.24 (2026-06-10)
-**自訂微型走勢圖顯示與按鈕對比度修正**
-- **「顯示走勢圖」開關與效能優化**：在自選監控清單標題旁新增一個「顯示走勢圖」切換開關，且**預設為關閉**。關閉時，清單內所有卡片不渲染 Canvas 畫布，且不呼叫 `drawSparkline` 繪圖程序。這不僅能大幅節省瀏覽器渲染負荷，也能避免不必要的畫布重繪，達到極簡看盤與省電/省 CPU 的效果。狀態會自動儲存於 `localStorage` 中。
-- **隱形黑白按鈕對比度修正**：修復「隱形黑白模式」下，使用白底/黑底背景色（`--color-accent`）的按鈕（例如「新增監控」按鈕、代號下單按鈕及分時/均線切換 Tab）字體偏白，導致文字在白色背景上完全重疊消失的問題。強制在黑白隱形模式下將這類按鈕的字體顏色設為與背景對比的 `var(--bg-primary)`，確保字體清晰易讀。
+### 📅 2026-06-10 (v1.3.18 至 v1.3.25)
 
-### v1.3.23 (2026-06-10)
-**隱形黑白模式配色對比度修正**
-- **指數徽章背景對比修正**：修復「隱形黑白模式」下，加權大盤指數卡片底色（`--bg-tertiary`）與漲跌幅徽章背景色（也是 `var(--color-down-bg)` 綁定的 `bg-tertiary`）發生色彩重疊融合、導致徽章邊框和字體背景無法辨識的問題。將 `.watchlist-item-index` 底下的 `.badge-up` 與 `.badge-down` 背景色強制指定為相對深色的 `--bg-secondary`，確保完美的色彩層次與易讀性。
+* **v1.3.25** - **快取停用防禦與對比度深度修正**：
+  * **徹底停用靜態快取**：為解決瀏覽器快取舊網頁與樣式導致的排版異常，後端 Python 伺服器 `DashboardHandler` 新增了 Cache-Control 防快取標頭，確保每次重新整理網頁時皆能 100% 載入最新檔案。
+  * **黑白按鈕與 Tab 懸停對比度修正**：修正了「隱形黑白模式」下，白底按鈕與 active/hovered 狀態下的分時/均線切換 Tab 文字顏色為 `var(--bg-primary)`（極簡黑色），避免白底白字重疊消失。
+  * **「顯示走勢圖」更名**：將自選監控標題旁的開關文字修改為更切合使用者語意的「顯示趨勢圖」，並加上浮動提示框說明其省流量效能。
+  * **移除行內樣式衝突**：移成了訂單確認送出按鈕 `#btn-confirm-submit` 的冗餘行內樣式，防止干擾 CSS 主題覆寫。
+  * **專案全面更名**：將專案名稱全面由 "SinoPac Genie" 改為 "StockGenie"。
 
-### v1.3.22 (2026-06-10)
-**自選指數商品卡片結構對稱優化**
-- **下單按鈕佔位對齊**：解決大盤等非交易性指數商品卡片（沒有下單按鈕）價格區塊偏向最右側邊緣，而與其他普通股票價格區塊垂直線無法對齊的問題。在卡片最右側引入 `watchlist-order-btn-placeholder` 佔位元素（寬度為 `42px`），使所有自選商品不論是否有下單按鈕，其價格與走勢圖皆能在垂直方向完美對齊。
+* **v1.3.24** - **微型趨勢圖開關與按鈕對比度修正**：
+  * **「顯示走勢圖」開關與效能優化**：自選清單標題旁新增「顯示走勢圖」Toggle 開關（預設為關閉，狀態持久化於 `localStorage`）。關閉時，卡片不渲染 Canvas 畫布，也免除微型折線繪製，以節省瀏覽器渲染負載、網路流量與 CPU 負荷。
+  * **隱形黑白按鈕對比度修正**：修正了 stealth 配色下部分以 `--color-accent` 為背景的按鈕字體偏白導致文字看不見的問題，強制指定文字顏色為 `var(--bg-primary)`。
 
-### v1.3.21 (2026-06-10)
-**自選股響應式排版對齊優化**
-- **微型走勢圖置中排版**：優化自選卡片於寬螢幕下的版面對齊。限制股票名稱寬度並將走勢圖（Sparkline）設為 `flex: 1` 且限制最大寬度為 `160px`，搭配 `margin-left: auto` 彈性將價格區塊推至最右邊，解決走勢圖擠在最右邊以及中間大片空白的不美觀排版。
-- **視窗縮放即時重繪**：新增視窗 resize 事件防禦性監聽器，當視窗大小改變時自動在 150ms 後 debounce 重新繪製微型走勢圖，徹底解決走勢圖縮放時拉伸變形的問題。
+* **v1.3.23** - **隱形黑白模式配色對比度修正**：
+  * **指數徽章背景對比修正**：修正「隱形黑白模式」下加權大盤指數卡片底色與漲跌幅徽章背景色重疊融合成一片的問題，將指數徽章背景強制指定為相對深色的 `--bg-secondary`，以提升易讀性與視覺層次。
 
-### v1.3.20 (2026-06-10)
-**自選排序與大盤顯示優化**
-- **自選清單自訂排序**：於每個自選股卡片最左側新增微型的上移（▲）與下移（▼）箭頭按鈕。使用者可隨心所欲調整監控順序，排序結果會即時渲染並持久化儲存於 `localStorage` 中。
-- **大盤卡片專屬配色**：針對指數商品（`IND`），自動為卡片套用淡灰底色樣式（使用 `--bg-tertiary`），與一般股票產生視覺區隔。
-- **即時漲跌點數顯示**：大盤加權指數的漲跌幅徽章改為同時顯示「目前漲跌點數 (漲跌百分比)」（例如 `+150.25 (+0.82%)`），並將區塊寬度擴展至 `140px` 以防止折行跑版。
+* **v1.3.22** - **自選指數商品卡片結構對稱優化**：
+  * **下單按鈕佔位對齊**：在無下單按鈕的大盤指數卡片最右側引入 `watchlist-order-btn-placeholder` 佔位元素（寬度為 `42px`），解決了其價格區塊偏向最右側、與普通股票垂直線無法對齊的問題。
 
-### v1.3.19 (2026-06-10)
-**大盤指數監控支援**
-- **動態 Security Type 適配**：支援大盤加權指數 `TSE001` (或代碼 `001`) 監控。新增自選股時自動 fallback 以 `IND` (指數) 商品類別向後端查詢。
-- **自選清單交易限制**：當監控商品為指數 (`IND`) 時，自動隱藏「下單」按鈕，避免使用者誤觸點擊。
-- **全方位圖表支援**：大盤加權指數的實時分時圖 (Tick Chart)、歷史日 K 線圖 (Kbar Chart) 與 MA 均線指標均能完整載入與流暢繪製。
+* **v1.3.21** - **自選股響應式排版對齊優化**：
+  * **微型走勢圖置中排版**：限制股票名稱寬度，並將走勢圖（Sparkline）設為 `flex: 1`（最大寬度為 `160px`）搭配 `margin-left: auto` 彈性推開價格區塊，解決寬螢幕下走勢圖擠在最右邊及中間大片空白的缺點。
+  * **視窗縮放即時重繪**：新增視窗 resize 事件防禦性監聽器，視窗大小改變時自動在 150ms 後 debounce 重新繪製微型走勢圖，避免拉伸變形。
 
-### v1.3.18 (2026-06-10)
-**介面排版優化**
-- **響應式天區（Header）收縮**：當瀏覽器視窗縮小時，自動隱藏系統標題（SinoPac Genie）與連線狀態文字（僅留下運作燈號與倒數時鐘），如同側邊欄收縮般，釋放大量水平空間，解決窄螢幕跑版問題。
-- **防止文字折行**：為標題、連線狀態及倒數計時增加 `white-space: nowrap`，徹底防範小寬度下產生的直列式文字折行。
+* **v1.3.20** - **自選排序與大盤顯示優化**：
+  * **自選清單自訂排序**：自選股卡片最左側新增微型的上移（▲）與下移（▼）箭頭按鈕，排序結果可即時在清單中上下互換項目順序，並持久化至 `localStorage`。
+  * **大盤卡片專屬配色**：針對指數商品（`IND`），自動為卡片套用淡灰底色樣式（使用 `--bg-tertiary`）。
+  * **即時漲跌點數顯示**：大盤加權指數的漲跌幅徽章改為同時顯示「目前漲跌點數 (漲跌百分比)」（例如 `+150.25 (+0.82%)`），並將區塊寬度擴展至 `140px` 以防止折行跑版。
 
-### v1.3.17 (2026-06-09)
-**安全性增強**
-- **唯讀金鑰安全檢核與攔截**：按下下單按鈕時自動檢核是否有下單權限，若無權限，在前端顯示「下單權限關閉」。
-- **雙重安全檢核機制**：
-  - 前端：開單時檢查 `state.tradingPermitted`，若無權限則跳出提示並阻斷下單抽屜開啟。
-  - 後端：在 API 代理層（`/proxy/api/v1/order/place_order`）攔截下單請求。若金鑰屬唯讀金鑰，主動拒絕交易並回傳 400 錯誤。
-  - 支援在 `.env` 中使用 `TRADING_ENABLED=false` 顯式停用交易功能。
+* **v1.3.19** - **大盤指數監控支援**：
+  * **動態 Security Type 適配**：支援大盤加權指數 `TSE001` (或代碼 `001`) 監控，自動以 `IND` (指數) 商品類別查詢。
+  * **自選清單交易限制**：當監控商品為指數 (`IND`) 時，自動隱藏「下單」按鈕。
+  * **全方位圖表支援**：大盤加權指數的分時圖、日 K 線圖與 MA 均線指標均能完整載入與流暢繪製。
 
-### v1.3.16 (2026-06-09)
-**Bug 修正**
-- `drawCanvasLoading` 函數宣告遺失 → 整個 `app.js` 語法錯誤，JS 完全無法執行（伺服器顯示離線）
-- `renderDetailTickChart` 畫圖前未呼叫 `clearRect` → 「載入中...」文字與折線圖疊加殘留
-- 自選股「昨日參考價」顯示 `--`：snapshot API 不回傳此欄位，改為在點選股票時從 `/data/contracts/{code}` 補抓並快取至 `item.reference`
-- 自選監控清單排版歪斜：`watchlist-info` 缺少 `flex:1`，導致各列 sparkline 和價格欄位位置不齊
+* **v1.3.18** - **介面響應式排版優化**：
+  * **響應式天區收縮**：當瀏覽器視窗縮小時，自動隱藏系統標題（StockGenie）與連線狀態文字（僅留下運作燈號與倒數時鐘），釋放大量水平空間。
+  * **防止文字折行**：為標題、連線狀態及倒數計時增加 `white-space: nowrap`，防止小寬度下產生的文字折行。
 
-**效能優化**
-- 新增 `fetchKbarsWithCache(code)`：`loadMAStats` 與 `renderDetailMAChart` 共用同一份 2 年 kbars 快取（1 小時有效），避免每次點選股票重複發送大量歷史資料請求
-- `checkServerStatus` 輪詢間隔 10 秒 → 60 秒（每小時減少 300 次 `/auth/usage` 呼叫）
-- 新增 `isTradingHours()`：盤後（09:00–13:35 以外）自動跳過 `trading_limits` API（盤後永遠回傳 500）
-- 新增 `_fetchCount` 降頻計數器：`account_balance`、`position_unit`、`settlements`、`margin` 改為每 4 次 snapshot 週期執行一次（約 60 秒），snapshot 快照仍維持原頻率確保即時報價
+---
 
-**快取機制說明**
-| 資料 | 快取策略 |
-|------|----------|
-| kbars（2 年日線） | session 內快取 1 小時，多處共用 |
-| 昨日參考價 | 快取至 watchlist item，重新整理前不重複抓取 |
-| Snapshot 快照 | 不快取，每次 fetchData 均更新 |
+### 📅 2026-06-09 (v1.3.16 與 v1.3.17)
 
-### v1.3.x 之前
+* **v1.3.17** - **安全性增強**：
+  * **唯讀金鑰安全檢核與攔截**：按下下單按鈕時自動檢核是否有下單權限，若無權限，在前端顯示「下單權限關閉」。
+  * **雙重安全檢核機制**：
+    * 前端：開單時檢查 `state.tradingPermitted`，若無權限則跳出提示並阻斷下單抽屜開啟。
+    * 後端：在 API 代理層（`/proxy/api/v1/order/place_order`）攔截下單請求。若金鑰屬唯讀金鑰，主動拒絕交易並回傳 400 錯誤。
+    * 支援在 `.env` 中使用 `TRADING_ENABLED=false` 顯式停用交易功能。
+
+* **v1.3.16** - **Bug 修正與效能優化**：
+  * **修正 `drawCanvasLoading` 函數宣告遺失** 導致 JS 完全無法執行的語法錯誤。
+  * **修正 `renderDetailTickChart` 未清除畫布** 導致「載入中...」文字與折線圖疊加殘留的問題。
+  * **補抓自選股「昨日參考價」**：自選股昨日參考價改由 `/data/contracts/{code}` 補抓並快取。
+  * **修正自選監控清單排版歪斜**：為 `watchlist-info` 加上 `flex:1`，使各列 sparkline 和價格欄位垂直對齊。
+  * **快取機制優化**：新增 `fetchKbarsWithCache` 共享 2 年 kbars 快取（1 小時有效），大幅減少股票切換時的歷史日線讀取請求。
+  * **降低輪詢頻率**：`checkServerStatus` 輪詢間隔延長至 60 秒。
+  * **避開無效請求**：新增 `isTradingHours()`，盤後時段自動跳過 `trading_limits` 的 API 呼叫（盤後永豐會回傳 500 錯誤）。
+  * **降頻控制**：新增 `_fetchCount` 計數器，帳號資金與歷史餘額等非高頻數據降為每 60 秒輪詢一次。
+
+---
+
+### 📅 2026-06-09 之前 (v1.3.x 以前)
 詳見 `app.js` 檔頭版本歷史與 `task.md` 任務清單。
