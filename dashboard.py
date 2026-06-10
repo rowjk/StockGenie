@@ -107,6 +107,115 @@ def fetch_twse_json(url):
         _twse_cache[url] = (now, data)
     return data
 
+# ── 美股行情（Yahoo Finance 公開 chart API）────────────────────────────────
+# 商品代碼採格式驗證（非白名單）：僅限定 Yahoo chart 端點與固定查詢組合，
+# 不轉發任意 URL，因此不構成開放代理。
+US_KNOWN_NAMES = {
+    "^GSPC": "S&P 500 指數",
+    "VOO": "Vanguard S&P 500 ETF",
+}
+US_SYMBOL_ALLOWED_CHARS = set(".^-=")  # 字母數字以外允許的符號（如 ^GSPC、BRK-B、ES=F）
+
+def is_valid_us_symbol(symbol):
+    """美股代碼格式驗證：1-12 字元，限大寫字母/數字/.^-= 。"""
+    return (
+        1 <= len(symbol) <= 12
+        and all(c.isascii() and (c.isalnum() or c in US_SYMBOL_ALLOWED_CHARS) for c in symbol)
+    )
+YAHOO_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart/"
+# 允許的查詢組合：盤中分時 / 長期日線（供 MA 計算）
+US_ALLOWED_QUERIES = {
+    ("1d", "5m"): 60,      # 盤中走勢，快取 60 秒
+    ("2y", "1d"): 1800,    # 日 K 與均線，快取 30 分鐘
+}
+_us_cache = {}             # (symbol, range, interval) -> (fetched_at_epoch, payload)
+_us_cache_lock = threading.Lock()
+
+def fetch_us_chart(symbol, range_, interval):
+    """抓取 Yahoo Finance chart API 並整理為精簡 payload（帶快取，失敗回快取舊資料）。
+
+    回傳格式：{symbol, name, currency, price, prev_close, change, change_rate,
+              market_state, timestamps[], open[], high[], low[], close[], volume[]}
+    """
+    import urllib.request
+    import urllib.parse
+    ttl = US_ALLOWED_QUERIES[(range_, interval)]
+    key = (symbol, range_, interval)
+    now = time.time()
+    with _us_cache_lock:
+        cached = _us_cache.get(key)
+        if cached and now - cached[0] < ttl:
+            return cached[1]
+
+    url = (f"{YAHOO_CHART_BASE}{urllib.parse.quote(symbol)}"
+           f"?range={range_}&interval={interval}")
+    try:
+        import urllib.error
+        req = urllib.request.Request(url, headers={
+            "accept": "application/json",
+            "Accept-Encoding": "gzip",
+            # Yahoo 對無 UA 或非瀏覽器 UA 的請求可能回 429/403
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read()
+            if resp.info().get('Content-Encoding') == 'gzip':
+                import gzip
+                content = gzip.decompress(content)
+            raw = json.loads(content.decode("utf-8"))
+
+        result = raw["chart"]["result"][0]
+        meta = result.get("meta", {})
+        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+        timestamps = result.get("timestamp") or []
+
+        # 同步剔除 close 為 null 的點（Yahoo 盤中常見缺漏 bar）
+        cleaned = {"timestamps": [], "open": [], "high": [], "low": [], "close": [], "volume": []}
+        closes_raw = quote.get("close") or []
+        for i, ts in enumerate(timestamps):
+            c = closes_raw[i] if i < len(closes_raw) else None
+            if c is None:
+                continue
+            cleaned["timestamps"].append(ts)
+            cleaned["close"].append(c)
+            for fld in ("open", "high", "low", "volume"):
+                arr = quote.get(fld) or []
+                cleaned[fld].append(arr[i] if i < len(arr) else None)
+
+        price = meta.get("regularMarketPrice")
+        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+        change = (price - prev_close) if (price is not None and prev_close) else None
+        change_rate = (change / prev_close * 100) if (change is not None and prev_close) else None
+
+        payload = {
+            "symbol": symbol,
+            # 名稱優先序：本地中文名 > Yahoo 商品名 > 代碼
+            "name": US_KNOWN_NAMES.get(symbol) or meta.get("shortName") or meta.get("longName") or symbol,
+            "currency": meta.get("currency", "USD"),
+            # INDEX / EQUITY / ETF 等，供前端區分指數與一般商品樣式
+            "instrument_type": meta.get("instrumentType", ""),
+            "price": price,
+            "prev_close": prev_close,
+            "change": change,
+            "change_rate": change_rate,
+            "market_state": meta.get("marketState") or "",
+            **cleaned,
+        }
+    except Exception as e:
+        # Yahoo 對不存在的代碼回 HTTP 404，明確轉成 LookupError 供路由回 404
+        if isinstance(e, urllib.error.HTTPError) and e.code == 404:
+            raise LookupError(f"查無美股商品代碼: {symbol}")
+        print(f"⚠ Yahoo Finance 抓取失敗（{symbol} {range_}/{interval}）：{e}")
+        with _us_cache_lock:
+            cached = _us_cache.get(key)
+        if cached:
+            return cached[1]
+        raise
+
+    with _us_cache_lock:
+        _us_cache[key] = (now, payload)
+    return payload
+
 # ── Load and Map Environment ──────────────────────────────────────────────
 def load_env():
     env_path = WORKSPACE_DIR / ".env"
@@ -193,6 +302,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_twse_announcements()
         elif self.path.startswith('/api/twse-dividends'):
             self.handle_twse_dividends()
+        elif self.path.startswith('/api/us-chart'):
+            self.handle_us_chart()
         else:
             super().do_GET()
 
@@ -335,6 +446,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode('utf-8'))
+
+    def handle_us_chart(self):
+        """美股行情查詢（Yahoo Finance 代理，代碼格式驗證 + 固定查詢組合）。"""
+        from urllib.parse import urlparse, parse_qs
+        try:
+            qs = parse_qs(urlparse(self.path).query)
+            symbol = qs.get('symbol', [''])[0].strip().upper()
+            range_ = qs.get('range', ['1d'])[0]
+            interval = qs.get('interval', ['5m'])[0]
+            if not is_valid_us_symbol(symbol):
+                self.send_json_error(400, f"無效的美股商品代碼格式: {symbol}")
+                return
+            if (range_, interval) not in US_ALLOWED_QUERIES:
+                self.send_json_error(400, f"不支援的查詢組合: range={range_}, interval={interval}")
+                return
+            self._send_json(fetch_us_chart(symbol, range_, interval))
+        except LookupError as e:
+            self.send_json_error(404, str(e))
+        except Exception as e:
+            self.send_json_error(502, f"美股行情查詢失敗: {e}")
 
     def handle_twse_announcements(self):
         """自選股即時重大訊息（TWSE OpenAPI t187ap04_L，快取 10 分鐘）。"""

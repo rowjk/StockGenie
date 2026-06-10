@@ -52,6 +52,15 @@
                         </svg>
                         <span>自選監控</span>
                     </li>
+                    <li class="sidebar-item" data-view="us-market">
+                        <!-- Globe Icon (represents US Market) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                        <span>美股指數</span>
+                    </li>
                     <li class="sidebar-item" data-view="api-status">
                         <!-- Network Signal Icon (represents API Stats) -->
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -421,6 +430,73 @@
                     </div>
                 </section>
 
+                <!-- ── VIEW: US MARKET (美股指數監控) ── -->
+                <section class="view-section" id="view-us-market">
+                    <div class="grid-main">
+                        <!-- US Watchlist -->
+                        <div class="card">
+                            <div class="card-header">
+                                <span class="card-title">美股自選監控 (點擊商品開啟右側明細)</span>
+                                <span class="metric-subtitle" id="us-market-status">行情來源: Yahoo Finance (延遲約 15 分鐘)</span>
+                            </div>
+                            <div class="watchlist-container">
+                                <div class="watchlist-search">
+                                    <input type="text" class="input-text" id="us-search-input" placeholder="輸入美股代碼 (例如 AAPL, QQQ, ^GSPC)">
+                                    <button class="btn-primary" id="btn-add-us">新增監控</button>
+                                </div>
+                                <div id="us-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                                    <!-- US items loaded here -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- US Item Details -->
+                        <div class="card" id="us-detail-card" style="opacity: 0.5; pointer-events: none;">
+                            <div class="card-header">
+                                <span class="card-title">商品詳細資訊</span>
+                                <button class="btn-icon" id="btn-remove-us" style="display: none;" title="從監控清單移除">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                </button>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 16px;">
+                                <div>
+                                    <h2 style="font-size: 1.5rem; font-family: var(--font-mono);" id="us-detail-code">----</h2>
+                                    <p class="metric-subtitle" id="us-detail-name">請從左側清單點選商品以載入走勢圖</p>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-family: var(--font-mono); font-size: 0.95rem;">
+                                    <div>昨日收盤價: <span id="us-detail-ref" style="font-weight:600;">--</span></div>
+                                    <div>今日開盤價: <span id="us-detail-open" style="font-weight:600;">--</span></div>
+                                    <div>最高價格: <span id="us-detail-high" style="font-weight:600;">--</span></div>
+                                    <div>最低價格: <span id="us-detail-low" style="font-weight:600;">--</span></div>
+                                    <div>最新成交價: <span id="us-detail-close" style="font-weight:600;">--</span></div>
+                                    <div>今日成交量: <span id="us-detail-volume" style="font-weight:600;">--</span></div>
+                                    <div>周線 MA5: <span id="us-detail-ma5" style="font-weight:600;color:#3b82f6;">--</span></div>
+                                    <div>月線 MA20: <span id="us-detail-ma20" style="font-weight:600;color:#f59e0b;">--</span></div>
+                                    <div>季線 MA60: <span id="us-detail-ma60" style="font-weight:600;color:#10b981;">--</span></div>
+                                    <div>年線 MA240: <span id="us-detail-ma240" style="font-weight:600;color:#e11d48;">--</span></div>
+                                </div>
+                                <hr style="border: 0; border-top: 1px solid var(--border-color);">
+                                <!-- 圖表模式切換 -->
+                                <div class="detail-chart-tabs" id="us-chart-tabs">
+                                    <button class="detail-tab active" data-tab="tick">分時走勢</button>
+                                    <button class="detail-tab" data-tab="ma">均線走勢</button>
+                                </div>
+                                <!-- 分時走勢圖 -->
+                                <div id="us-tick-panel" class="trend-canvas-container" style="height: 150px;">
+                                    <canvas id="us-tick-chart"></canvas>
+                                </div>
+                                <!-- 均線走勢圖 -->
+                                <div id="us-ma-panel" style="display:none;">
+                                    <div class="trend-canvas-container" style="height: 150px;">
+                                        <canvas id="us-ma-chart"></canvas>
+                                    </div>
+                                    <div id="us-ma-legend" class="ma-legend"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- ── VIEW 4: API STATUS ── -->
                 <section class="view-section" id="view-api-status">
                     <div class="card" style="max-width: 600px;">
@@ -546,7 +622,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.4.6</span>
+                    <span>版本號: v1.5.0</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
