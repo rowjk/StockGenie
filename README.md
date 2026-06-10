@@ -22,27 +22,25 @@ graph TD
     classDef remote fill:#1e293b,stroke:#f59e0b,stroke-width:1px,color:#f8fafc,stroke-dasharray: 5 5;
 
     %% Nodes
-    Browser["瀏覽器前端 (Web UI)"]:::browser
+    Browser["瀏覽器前端 Web UI"]:::browser
 
-    subgraph "本地主機 (Local Host)"
-        PyServer["Python 後端服務 (dashboard.py)"]:::pyServer
-        
-        ShioajiServer["Shioaji API 守護進程 (shioaji.exe)"]:::localDaemon
-        
-        JsonDB[("資產歷史記錄 (asset_history.json)")]:::pyServer
+    subgraph "本地主機 Local Host"
+        PyServer["Python 後端服務 dashboard.py"]:::pyServer
+        ShioajiServer["Shioaji API 守護進程 shioaji.exe"]:::localDaemon
+        JsonDB["資產歷史記錄 asset_history.json"]:::pyServer
     end
 
-    RemoteSinoPac["永豐 API 伺服器 (雲端)"]:::remote
+    RemoteSinoPac["永豐 API 伺服器 雲端"]:::remote
 
     %% Relationships
-    Browser -->|1. 載入網頁資源 (HTML/CSS/JS)| PyServer
-    Browser -->|2. 讀寫帳戶歷史資產數據| PyServer
-    PyServer -->|讀寫 JSON| JsonDB
+    Browser -->|"1. 載入網頁資源"| PyServer
+    Browser -->|"2. 讀寫帳戶歷史資產數據"| PyServer
+    PyServer -->|"3. 讀寫 JSON 檔案"| JsonDB
     
-    Browser -->|3. 轉發行情/交易請求 (/proxy/*)| PyServer
-    PyServer -->|4. 代理轉發 (API Proxy)| ShioajiServer
+    Browser -->|"4. 轉發行情與交易請求"| PyServer
+    PyServer -->|"5. 代理轉發 API Proxy"| ShioajiServer
     
-    ShioajiServer <-->|5. 證券憑證驗證 & 委託下單 / 訂閱即時行情| RemoteSinoPac
+    ShioajiServer <-->|"6. 憑證驗證與委託下單"| RemoteSinoPac
 ```
 
 ---
