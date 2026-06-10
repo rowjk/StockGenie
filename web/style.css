@@ -289,6 +289,7 @@ a {
 .header-title {
     font-size: 1.1rem;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .server-status {
@@ -300,6 +301,7 @@ a {
     background-color: var(--bg-tertiary);
     padding: 4px 12px;
     border-radius: 50px;
+    white-space: nowrap;
 }
 
 .idle-countdown {
@@ -313,6 +315,7 @@ a {
     padding: 4px 12px;
     border-radius: 50px;
     transition: color 0.3s, background-color 0.3s;
+    white-space: nowrap;
 }
 
 .idle-countdown.idle-warning {
@@ -503,6 +506,33 @@ a {
 @media (max-width: 1024px) {
     .grid-main {
         grid-template-columns: 1fr;
+    }
+    
+    /* 畫面縮小時，天區像左邊功能欄一樣縮起來 (隱藏文字只留圖示與燈號) */
+    .header-title {
+        display: none;
+    }
+    
+    #server-status-text {
+        display: none;
+    }
+    
+    .server-status {
+        padding: 4px 8px;
+    }
+}
+
+@media (max-width: 768px) {
+    .scheme-selector {
+        display: none; /* 手機/平板寬度下隱藏頂部配色選單 (在系統設定已有) */
+    }
+    
+    .header-controls {
+        gap: 8px;
+    }
+    
+    .main-header {
+        padding: 0 12px;
     }
 }
 
