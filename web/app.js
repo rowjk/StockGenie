@@ -2,6 +2,8 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.4.4 (2026-06-10)
+   - [效能] 支援 Page Visibility API，當網頁處於背景/最小化時自動暫停輪詢，顯示時恢復，節省大量頻寬流量與 CPU 資源
    v1.4.3 (2026-06-10)
    - [安全] 限制過期清理僅在總筆數大於 1000 筆時才啟動，並放寬至 365 天，防止手動導入歷史被每日存檔截斷
    - [安全] TWSE 憑證降級警告加上 _twse_cache_lock 保護防止併發多重列印
@@ -119,6 +121,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         resizeTimeout = setTimeout(() => {
             renderWatchlist();
         }, 150);
+    });
+
+    // 當網頁處於背景/最小化時，暫停輪詢以節省流量與 CPU 效能
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            console.log('[Visibility] 網頁隱藏，暫停 API 輪詢以節省流量與效能');
+            stopPolling();
+            if (state.twseFeedTimer) {
+                clearInterval(state.twseFeedTimer);
+                state.twseFeedTimer = null;
+            }
+        } else {
+            console.log('[Visibility] 網頁顯示，恢復 API 輪詢');
+            if (state.selectedAccount) {
+                restartPolling();
+                loadTwseFeeds();
+                if (!state.twseFeedTimer) {
+                    state.twseFeedTimer = setInterval(loadTwseFeeds, 10 * 60 * 1000);
+                }
+            }
+        }
     });
 });
 

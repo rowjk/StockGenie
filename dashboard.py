@@ -64,10 +64,15 @@ def fetch_twse_json(url):
     def _do_fetch(ctx=None):
         req = urllib.request.Request(url, headers={
             "accept": "application/json",
+            "Accept-Encoding": "gzip",
             "User-Agent": "StockGenie-Dashboard/1.0"
         })
         with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            content = resp.read()
+            if resp.info().get('Content-Encoding') == 'gzip':
+                import gzip
+                content = gzip.decompress(content)
+            return json.loads(content.decode("utf-8"))
 
     try:
         if _twse_needs_relaxed_ssl:
