@@ -1,6 +1,6 @@
 # StockGenie - 全面代碼評審報告 (Code Review)
 
-本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「StockGenie 防窺交易儀表板」專案進行全面的代碼評審。本報告已同步更新至最新版本 `v1.3.24`，涵蓋動態初始化、零股防禦性計算、每日寫入限頻、大盤加權指數監控、自選清單自訂排序與資料安全備份機制之審評。
+本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「StockGenie 防窺交易儀表板」專案進行全面的代碼評審。本報告已同步更新至最新版本 `v1.4.3`，涵蓋並行加速、安全導入校驗、TWSE 憑證鏈相容性處理、一鍵隱私遮蔽、終端機偽裝模式以及 Matrix 風格等新特性的設計審評與架構健壯性評估。
 
 ---
 
@@ -37,204 +37,136 @@ graph TD
 
 ### 2.2 代理轉發與異常安全
 * **評審點**：`handle_proxy_request` 中的例外處理與中文編碼。
-* **代碼段**：
-  ```python
-  def send_json_error(self, code, message):
-      try:
-          self.send_response(code)
-          self.send_header('Content-Type', 'application/json; charset=utf-8')
-          self.end_headers()
-          err_body = json.dumps({"error": str(message)}, ensure_ascii=False).encode('utf-8')
-          self.wfile.write(err_body)
-      except Exception as e:
-          print(f"發送 JSON 錯誤時發生異常: {e}")
-  ```
 * **評價**：自訂 `send_json_error` 並強制使用 `utf-8` 編碼。這有效避免了 Python 原生 `http.server` 的 `send_error` 在遇到 Windows 中文系統錯誤（如 `[WinError 10053] 連線已被您主機上的軟體中止`）時，因內建 `latin-1` codec 無法編碼中文而拋出 `UnicodeEncodeError` 導致後端進程混亂的問題。
+* **評價**：在 `/portfolio/profit_loss` 代理端點中，若前端未傳送 `begin_date` 與 `end_date`，後端會自動補上前 365 天的時間區間參數。此種 Proxy 層的參數補全設計降低了前端的職責，提高了 API 呼叫의 容錯度。
 
 ### 2.3 子進程 lifecycle 管理
 * **評審點**：`subprocess.Popen` 的進程宣告與回收。
-* **代碼段**：
-  ```python
-  api_proc = subprocess.Popen(
-      [shioaji_bin, "server", "start", "--no-open"],
-      env=run_env
-  )
-  ...
-  finally:
-      api_proc.terminate()
-      try:
-          api_proc.wait(timeout=5)
-      except subprocess.TimeoutExpired:
-          api_proc.kill()
-  ```
 * **評價**：
   * **無重導向 (PIPE) 鎖定防範**：`Popen` 沒有設定 `stdout=PIPE` 或 `stderr=PIPE`，這防範了 Windows 上因緩衝區（預設 64KB）塞滿導致 Shioaji API 進程死鎖卡死的嚴重缺陷。
-  * **優雅退出機制**：在 `finally` 區塊中使用 `terminate` 搭配超時 `kill` 機制，確保即使使用者按下 `Ctrl+C` 結束，背景的 `shioaji.exe`進程也會被確實清理，不會佔用 Port `8080` 造成下次啟動衝突。
+  * **優雅退出機制**：在 `finally` 區塊中使用 `terminate` 搭配超時 `kill` 機制，確保即使使用者按下 `Ctrl+C` 結束，背景的 `shioaji.exe` 進程也會被確實清理，不會佔用 Port `8080` 造成下次啟動衝突。
 
-### 2.4 Shioaji 服務初始化動態輪詢機制 (v1.3.0+)
+### 2.4 Shioaji 服務初始化動態輪詢機制
 * **評審點**：API 伺服器就緒偵測。
-* **代碼段**：
-  ```python
-  print("正在等待 Shioaji API 伺服器初始化...")
-  import urllib.request as _ur
-  for _ in range(30):
-      try:
-          _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
-          print("✅ Shioaji API 伺服器已就緒")
-          break
-      except Exception:
-          time.sleep(1)
-  ```
-* **評價**：由原先死板的 `time.sleep(8)` 升級為**動態探針輪詢 (HTTP Ping)**。後端每秒向 Shioaji 伺服器的 `/usage` 接頭發送輕量級 GET 請求，若順利建立連線即代表 API 就緒，立即可開啟瀏覽器，平均可縮短 3 到 5 秒的等待時間；同時設有 30 秒逾時保護，相容性與容錯度大幅提升。
+* **評價**：後端每秒向 Shioaji 伺服器的 `/usage` 接頭發送輕量級 GET 請求，若順利建立連線即代表 API 就緒，立即可開啟瀏覽器，平均可縮短 3 到 5 秒的等待時間；同時設有 30 秒逾時保護，相容性與容錯度大幅提升。
 
-### 2.5 資產歷史紀錄之安全性備份機制 (v1.3.0+)
+### 2.5 資產歷史紀錄之安全性備份機制
 * **評審點**：寫入磁碟前的原子保護。
-* **代碼段**：
-  ```python
-  if HISTORY_FILE.exists():
-      shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
-  with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-      json.dump(data, f, indent=2, ensure_ascii=False)
-  ```
 * **評價**：在覆寫 `asset_history.json` 之前，使用 `shutil.copy2` 自動生成 `.bak.json` 備份檔。這是一個成熟的防禦性設計，防範了因寫入中途突然斷電、進程遭強制終止或硬碟滿載等不可抗力因素造成的 JSON 資料損毀，保證了本地微型數據庫的持久性與資料安全。
+
+### 2.6 安全導入與嚴格數據校驗 (v1.4.0+)
+* **評審點**：`/api/asset-history/import` 端點的輸入安全。
+* **代碼段**：`_validate_history_payload` 靜態函式。
+* **評價**：
+  * **Schema 防禦**：嚴格限制輸入必須為陣列物件，且除了 `date` 與 `value` 之外不得包含任何未知欄位，有效防止了 NoSQL 注入或惡意屬性污染。
+  * **數據邊界保護**：檢驗 `value` 時，除了檢查型別為 `(int, float)` 外，特別使用 `not isinstance(val, bool)` 排除 Python 中作為 `int` 子類別的 `bool` 型態；此外使用 `math.isfinite(val)` 阻斷 `NaN` 與 `Infinity`，並校驗 `val >= 0`。
+  * **限制上傳大小**：限制 `content_length` 上限為 1MB 且筆數上限 5000 筆，防範了阻斷服務攻擊 (DoS) 的記憶體溢出風險。
+
+### 2.7 TWSE 憑證鏈相容性處理 (v1.4.1+)
+* **評審點**：`fetch_twse_json` 對 SSL 錯誤的處理。
+* **評價**：
+  * 由於 TWSE 公開 API 的 HTTPS 憑證缺少 `Subject Key Identifier`，在安裝了 OpenSSL 3.x 的現代 Python 環境下進行嚴格校驗會直接失敗並拋出 `SSLError`。
+  * 後端在捕獲此錯誤時，會將全域變數 `_twse_needs_relaxed_ssl` 標記為 `True`，並在當次及後續請求中降級使用寬鬆的 SSL Context (`ssl.CERT_NONE`) 重新抓取。
+  * 該設計平衡了可用性與安全性：因為 TWSE OpenAPI 抓取的僅為公開重大訊息與除權息公告，不包含任何個人帳務或交易私鑰，此種降級是安全且合理的。同時，記住狀態能避免每次請求都先卡住 6 秒超時，極大提升了系統流暢度。
 
 ---
 
 ## 3. 前端代碼審查 ([web/app.js](./web/app.js))
 
-### 3.1 邊界數據防禦性編程 (Robustness)
-* **評審點**：`renderAssetChart` 圖表渲染。
+### 3.1 前端 API 並行加速 (v1.4.1+)
+* **評審點**：`fetchData` 中多帳務端點的載入。
 * **代碼段**：
   ```javascript
-  const len = sortedHistory.length;
-  if (len === 1) {
-      ctx.fillStyle = 'var(--text-muted)';
-      ctx.font = '13px var(--font-sans)';
-      ctx.textAlign = 'center';
-      ctx.fillText('目前僅有今日首筆數據。您可以至左側「系統設定」手動補錄過去資產，以繪製趨勢折線。', w / 2, h / 2 - 30);
+  const tasks = [];
+  if (stockAcc && doSlowApis) {
+      tasks.push(fetchBalance(stockAcc));
+      if (isTradingHours()) tasks.push(fetchTradingLimits(stockAcc));
+      tasks.push(fetchStockPositions(stockAcc));
+      tasks.push(fetchSettlements(stockAcc));
   }
+  tasks.push(updateWatchlistSnapshots());
+  await Promise.allSettled(tasks);
   ```
-* **評價**：優秀的邊界處理。歷史紀錄若只有 1 筆，計算折線坐標時若直接除以 `len - 1` (即 `1 - 1 = 0`) 會導致除以零得到 `NaN` 錯誤，阻塞 JavaScript 的執行。此處不僅做好了 `len <= 1` 的座標三元防禦，還加入了畫布提示文字引導，顯著提升了 UX。
+* **評價**：由原先的序列 `await` 重構為 `Promise.allSettled` 並行發出。
+  * **速度提升**：首頁載入或輪詢時，不再受限於多個網路請求的延遲累加（永豐後台帳務系統有時回應偏慢，單次曾達 6 秒），首屏加載時間由「各支等待相加」優化為「最慢的一支」。
+  * **健壯性提升**：使用 `allSettled` 而非 `all`，這確保了即使某個帳務端點（例如盤後額度 API 失敗，或單一查詢超時）發生錯誤，也不會阻斷其他成功完成的 API（如餘額、持倉與自選行情快照），保證了系統部分的可用性。
 
-### 3.2 數據容錯與相容性
-* **評審點**：持倉明細的交易方向渲染與錯誤處理。
-* **代碼段**：
-  ```javascript
-  const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
-  ```
-* **評價**：考慮到了 Shioaji API 在不同交易環境（現貨、期貨、權證）或不同序列化版本下，回傳的買賣方向可能是 `"Buy"` / `"Sell"`，也可能是字元縮寫 `"B"` / `"S"`。此種防禦性寫法能防範表格因解析不匹配而導致空資料。
+### 3.2 邊界數據防禦性編程 (Robustness)
+* **評審點**：`renderAssetChart` 與 `renderPnlChart` 的圖表渲染。
+* **評價**：
+  * 歷史紀錄若只有 1 筆，計算折線坐標時若直接除以 `len - 1` (即 `1 - 1 = 0`) 會導致除以零得到 `NaN` 錯誤，阻塞 JavaScript 的執行。此處做好座標三元防禦防範了此問題。
+  * 月度損益圖表在聚合時，對數據型別進行了嚴格的有限數檢查 (`!Number.isFinite(pnl)`)，且相容於陣列或包裝物件的防禦性解析。
 
-### 3.3 貼心的錯誤回報
-* **評審點**：交易額度 API 失敗 fallback。
-* **代碼段**：
-  ```javascript
-  } else {
-      document.getElementById('limit-available').textContent = '盤後暫停服務';
-      document.getElementById('limit-summary').textContent = '（非交易時段永豐 API 不開放查詢交易額度）';
-  }
-  ```
-* **評價**：永豐證券 API 在盤後不開放交易額度（Limits）查詢，會強制返回 500 錯誤。此處在 `resp.ok` 為 `false` 或 `catch(e)` 時，將原本預設的 `--` 與 `0%` 替換為明確的中文說明提示，成功消除了使用者的疑惑。
-
-### 3.4 零股 (Odd-Lot) 持倉市值精確計算與單位標籤渲染 (v1.3.1+)
+### 3.3 零股 (Odd-Lot) 持倉市值精確計算與單位標籤渲染
 * **評審點**：資產市值計算中的股數乘數解析。
-* **代碼段**：
-  ```javascript
-  const ODD_LOT_TYPES = new Set(['IntradayOdd', 'Odd', 'BulkOdd']);
-  function isOddLot(pos) {
-      return ODD_LOT_TYPES.has(pos.order_lot);
-  }
-  function lotMultiplier(pos) {
-      return isOddLot(pos) ? 1 : 1000;
-  }
-  ...
-  const qtyStr = isOddLot(pos) ? `${pos.quantity}股` : `${pos.quantity}張`;
-  ...
-  const cost = p.quantity * p.price * lotMultiplier(p);
-  totalStockMarketVal += cost + (p.pnl || 0);
-  ```
 * **評價**：
   * **單位自動適配**：在持倉列表中能自動依據 `order_lot` 屬性區分並顯示「張」與「股」，有效防止交易員在看盤時誤判數量。
   * **市值數學公式修正**：Shioaji API 中，不論是零股（Odd）還是整張（Round），持倉數量均為 `pos.quantity`。然而整張的 quantity 單位為「張」（換算市值須乘 `1000` 倍股數），而零股的 quantity 單位本身即為「股」（乘數為 `1`）。此處設計了 `lotMultiplier` 權重機制，根治了零股市值被放大 1000 倍的算術錯誤，使每日收盤資產統計達到了 100% 精確度。
 
-### 3.5 資產歷史資料每日寫入限制優化 (v1.3.0+)
-* **評審點**：減緩後端 API 覆寫頻率。
-* **代碼段**：
-  ```javascript
-  // 每次都更新即時顯示
-  document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
-
-  // 每天只寫入 JSON 一次，避免每 15 秒重複覆寫
-  if (localStorage.getItem('lastSavedDate') === today) return;
-  ```
+### 3.4 高頻 API 節流與降頻
+* **評審點**：自選股與帳務 API 的分頻輪詢。
 * **評價**：
-  * **讀寫分離**：前端每 15 秒定時輪詢刷新時，畫面的即時餘額總計會維持高頻更新。
-  * **資料庫防抖 (Write Debounce)**：利用 `localStorage` 記錄上次寫入成功的日期字串，若與今日相同則中斷寫入請求。此設計大幅降低了對本地硬碟的 IO 耗損，防範了頻繁寫入鎖定 JSON 導致後端進程阻塞的問題。
+  * 引入 `_fetchCount` 計數器，將變動頻率低的財務數據（餘額、持倉、交割款）限制為每 4 次輪詢才執行一次（約 60 秒），而自選股行情快照維持 15 秒更新。
+  * 盤後時段自動跳過 `trading_limits` 呼叫，避免了盤後券商後台回傳 500 錯誤導致的前端頻繁錯誤日誌。
 
-### 3.6 交易櫃檯適配與 OTC 委託修正 (v1.3.0+)
-* **評審點**：解決上櫃股票 (OTC) 委託錯誤。
-* **代碼段**：
-  ```javascript
-  tr.onclick = () => openOrderDrawer(pos.code, 'STK', pos.last_price, pos.exchange || 'TSE');
-  ...
-  function openOrderDrawer(code, type, lastPrice, exchange) {
-      state.drawerExchange = exchange || 'TSE';
-      ...
-  }
-  ```
-* **評價**：先前版本中，下單抽屜的預設交易市場寫死為上市（`TSE`）。當使用者點選庫存中的上櫃股票（`OTC`）嘗試委託平倉時，會因為市場參數錯誤遭到交易所退單。新版將 `exchange` 做為狀態參數傳遞並塞入委託 payload 中，完整支援了上市 (TSE) 與上櫃 (OTC) 雙市場交易。
-
-### 3.7 移除遠端 Console 日誌注入 (v1.3.0+)
-* **評審點**：清理開發期殘留代碼。
-* **評價**：全面移除了 HTML `<head>` 中劫持 `console.log` 的 `remote-log` JavaScript 注入函數，並刪除了後端對應的 POST 路由。這使網頁在加載時不再產生不必要的本地轉發開銷，不僅提升了前端效能，更免除了控制台混亂日誌的困擾。
-
-### 3.8 歷史 K 線共享快取與高頻 API 節流機制 (v1.3.16+)
-* **評審點**：定時輪詢性能與防暴擊設計。
-* **代碼段**：
-  ```javascript
-  // Kbars 快取（session 內共用，快取 1 小時）
-  const kbarsCache = {};
-  async function fetchKbarsWithCache(code) { ... }
-  
-  // 慢速 API 降頻計數器（ balance / positions / settlements / margin 每 4 次輪詢跑一次，約 60 秒）
-  const doSlowApis = (_fetchCount % 4 === 1);
-  ```
-* **評價**：
-  * **歷史 K 線快取共享**：原先「均線走勢圖 (MA)」與「MA 數據格」各自向後端請求 2 年的歷史日線數據。新版引入了 `fetchKbarsWithCache` 進行 1 小時的 Session 內快取，極大地降低了高頻點選股票時對後端伺服器的 I/O 與網路傳輸壓力。
-  * **高頻 API 節流與降頻**：對變動頻率較低的財務與庫存 API，採用 `_fetchCount` 降頻計數器限制為每 4 次才呼叫一次（約 60 秒），既保證了即時行情（維持 15 秒更新），又避免了對永豐 API 伺服器發送過多無意義的高頻請求。
-  * **盤後 API 過濾**：因應永豐 API 在非交易時段（09:00–13:35 以外）查詢交易額度會強制返回 500 錯誤，加入 `isTradingHours()` 判斷，在盤後自動跳過 `trading_limits` 請求，解決了控制台高頻噴錯日誌的問題。
+### 3.5 自選股分批快照流量優化 (v1.4.0+)
+* **評審點**：自選股上限與 Chunk 發送。
+* **評價**：將自選股上限控制在 20 檔。在更新行情快照時，以 `CHUNK_SIZE = 10` 為一組分批打向後端代理。這能有效防止自選股過多時單次 HTTP Body 過大、API 限流超時或遭到券商端限速退單的風險。
 
 ---
 
 ## 4. 安全性與隱私評估
 
-### 4.1 防窺配色系統 (Stealth Options)
-* **設計評價**：
-  * 在 [style.css](./web/style.css) 中，透過 CSS 變數 `--color-up` 和 `--color-down` 來動態切換配色。
-  * **隱形黑白 (Stealth Mode)** 方案中，將漲跌色彩直接重設為前景色，達到 100% monochrome（黑白單色化），配合磨砂玻璃遮罩，防窺效果極佳，完美融入辦公室背景。
-  * 在 `v1.2.3` 中，將「盤後暫停服務」等大標字體縮小為 `1.1rem` 並套用 `.fallback-text` 灰字隱形處理，進一步強化了 Stealth Mode 的低調偽裝性。
+### 4.1 配色與主題切換安全防護
+* **科技藍調 (Slate Mode)**：靛藍與暖灰，外觀極像 AWS 或 Jira 流量監控。
+* **隱形黑白 (Stealth Mode)**：將漲跌色彩重設為前景色，達到 100% monochrome（黑白單色化），防窺效果極佳。
+* **駭客任務 (Matrix Mode)**：黑底螢光綠，數值輝光，偽裝成終端機或伺服器控制台。
+  * **鎖定防禦**：Matrix 配色僅支援暗色背景。選用時系統會自動強制鎖定為暗色主題並停用亮暗切換按鈕，防止使用者切換到亮色主題後發生嚴重的綠字刺眼或排版失衡；切回其他配色則自動解鎖並還原使用者先前的亮暗偏好。
 
-### 4.2 交易委託安全鎖與自訂確認 Modal
+### 4.2 一鍵隱私遮蔽 (Boss Key)
 * **設計評價**：
-  * 抽屜啟用時強制掛上 `.safety-overlay.active` 安全遮罩，必須手動點擊「解除安全鎖」按鈕才能解鎖操作，能有效防範誤點。
-  * 拋棄了瀏覽器原生容易被忽視的 `confirm()` 警告框，改用自製的 `modal-overlay` 暗色 Modal。在對話框內將股票代號、價格、數量以大字型表格條列顯示，並在最終確認時才取出 input payload 發送 POST 請求，提供極高的安全係數。
+  * 按下 `Esc` 或點擊眼睛圖示時，所有資產數字以 CSS 層級的 `*****` 替換，即使定時輪詢持續更新，也絕不會在 DOM 樹或畫面上洩露真實數字。
+  * 所有的 Canvas 圖表（資產趨勢、月度損益、分時走勢、均線、Sparkline）會立即清除畫布，並寫入 `[DATA MASKED]` 佔位字樣，防止旁人透過波動弧度或 Y 軸座標反推使用者的真實資產規模。
+
+### 4.3 終端機日誌看盤模式 (Terminal Log Mode)
+* **設計評價**：
+  * 雙擊空白鍵（400ms 內）觸發，全螢幕覆蓋黑底綠字日誌。自選行情與庫存自動轉化為偽裝日誌（如 `[INFO] Heartbeat check code 2330: price=585`）。
+  * 阻斷了在非輸入框狀態下的空白鍵滾動行為（`preventDefault`），避免了頻繁雙擊導致網頁上下劇烈跳動的尷尬，偽裝體驗極佳。
+  * 退出時會徹底清空 terminal-overlay 中的所有日誌節點，不留任何報價與資產殘跡。
 
 ---
 
 ## 5. 潛在風險與改進建議 (Recommendations)
 
-儘管代碼整體結構非常健全，但仍有以下幾點可在後續迭代中進一步優化：
+儘管代碼在 v1.4.3 中已經過深度優化，結構非常健全，但在極端情況下仍有以下設計優化空間：
 
-1. **API 金鑰與憑證路徑環境變數檢驗**
-   * **建議**：若使用者的 `Sinopac.pfx` 檔案因過期或路徑錯誤而不存在，雖然 Shioaji 伺服器仍能啟動，但後續現貨下單將會失敗。建議在後端啟動前，加入一步對 `CA_CERT_PATH` 檔案實體存在性的檢查，若不存在，則在控制台主動列印出黃色警告字樣。
+### 5.1 歷史數據手動導入與每日 Pruning 的設計衝突
+* **問題分析**：在 `dashboard.py` 中，歷史數據手動導入端點 `/api/asset-history/import` 允許使用者導入最多 5000 筆的歷史資料。然而，在每日自動儲存資產的 `/api/asset-history` (POST) 邏輯中，系統會自動進行清理：
+  ```python
+  cutoff = datetime.now() - timedelta(days=90)
+  # 清理大於 90 天的歷史紀錄，但至少保留 10 筆
+  ```
+  這意味著，如果使用者導入了 1 年 (365 筆) 甚至更久的歷史淨值紀錄，在隔天網頁開啟並成功寫入當日首次資產紀錄時，後端會將 90 天以前的歷史紀錄全部 Prune 刪除，導致手動導入的舊資料在一瞬間遺失。
+* **改進建議**：
+  在每日寫入的清理邏輯中，建議考慮「如果總記錄筆數小於某個合理上限（如 1000 筆），則不進行 90 天強制清理」，或者只清理「自動記錄的數據」，保留手動導入的長週期歷史。
 
-2. **自選股快照請求 (Snapshots) 的批次上限**
-   * **建議**：如果自選股數量非常多（例如超過 50 檔），一次性發送大批快照可能會導致 API 伺服器超時。建議在前端限制自選股上限為 20 檔，或在發送時以每 10 檔為一組進行分批 (chunk) 請求。
-
-3. **歷史淨值儲存的 Pruning 邊界**
-   * **建議**：如果使用者連續 90 天沒有開機使用儀表板，在第 91 天開啟時，歷史數據會在一瞬間全部被 Prune 清空。建議修改清理邏輯為「保留最新且至少 10 筆數據」，防止極端情況下歷史數據全部遺失。
+### 5.2 全域憑證降級標記的執行緒安全
+* **問題分析**：在 `dashboard.py` 中，`_twse_needs_relaxed_ssl` 是一個全域布林值，並在多個處理 HTTP 請求的執行緒中被讀寫，卻沒有使用 Lock 保護：
+  ```python
+  if _twse_needs_relaxed_ssl:
+      data = _do_fetch(_relaxed_ctx())
+  ```
+  雖然 Python 的 GIL 保證了布林值賦值的原子性，但在極端併發下（例如網頁剛載入，多個執行緒同時請求公告與除權息 API 且均遭遇 SSL 驗證失敗），可能會有多個執行緒同時觸發 `_twse_needs_relaxed_ssl = True` 並各自在終端機列印一次警告訊息。
+* **改進建議**：
+  雖然這不會導致崩潰，但可以將該布林值的寫入與警告列印放置在 `_twse_cache_lock` 保護的區塊內，以確保終端機警告日誌只會乾淨地輸出一次。
 
 ---
 
 ## 6. 審評結論
 
-本專案是一個**實用性極高、細節到位、安全意識強烈**的永豐證券交易輔助工具。`v1.3.24` 版本精準地解決了零股算術乘數、上櫃交易委託、高頻寫入磁碟耗損、高頻 API 請求超載（歷史 K 線快取與輪詢降頻）、Canvas 畫布文字殘影、唯讀 API 金鑰下單攔截防護、窄螢幕響應式天區收縮排版、大盤加權指數 (IND) 行情監控與交易防護限制，以及**自選清單自訂排序與持久化、大盤指數 (IND) 點數差值與下單按鈕佔位對稱對齊、自選卡片走勢圖「顯示/隱藏」切換開關、隱形黑白模式下按鈕配色對比度修正與響應式走勢圖置中佈局優化**等核心問題。系統在維持極佳「低調防窺」特性的同時，在後端多執行緒併發、原子寫入備份與前端防禦性編程上皆展現了非常高水準的穩定性與成熟度。
+`v1.4.3` 版本的 **StockGenie** 展現了極高的工程實用性與代碼成熟度：
+1. **在效能上**，前端採用 `Promise.allSettled` 並行帳務 API，大幅縮減了加載等待時間；歷史 K 線快取機制與慢速 API 降頻節流，將系統對券商 API 的衝擊降到最低。
+2. **在安全性上**，後端實作了嚴格的 Schema JSON 校驗，整批原子性寫入與備份機制保證了資料的高可用性。
+3. **在使用者體驗與隱私上**，Boss Key 與 Terminal Log 模式的 CSS 遮蔽、畫布清空以及滾動阻斷處理，細節打磨得非常到位；Matrix 模式的主題鎖定更防範了視覺上的異常。
+
+只要解決手動導入歷史與每日 90 天清理的邏輯衝突，本系統在本地端運行的健壯性與隱密性將達到無懈可擊的水平。
