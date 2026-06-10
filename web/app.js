@@ -2,6 +2,8 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.19 (2026-06-10)
+   - [大盤] 支援大盤加權指數 (TSE001 / 001) 的監控與圖表繪製，自選股新增時自動 fallback 支援 IND 合約，並自動隱藏其交易下單按鈕
    v1.3.18 (2026-06-10)
    - [排版] 修正天區（Header）在畫面縮小寬度時的跑版，隱藏標題與狀態文字（僅留圖示與燈號），實現類似側邊欄的響應式收縮
    v1.3.17 (2026-06-09)
@@ -706,8 +708,13 @@ function initWatchlistControls() {
         if (!code) return;
         
         try {
-            // 查詢股票合約資訊，確認股票存在
-            const resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
+            // 查詢合約資訊，優先用 STK (股票) 查，若查無則用 IND (指數) 查
+            let secType = 'STK';
+            let resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
+            if (!resp.ok) {
+                resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=IND`);
+                if (resp.ok) secType = 'IND';
+            }
             if (resp.ok) {
                 const contract = await resp.json();
                 
@@ -721,6 +728,7 @@ function initWatchlistControls() {
                     code: contract.code,
                     name: contract.name,
                     exchange: contract.exchange,
+                    security_type: secType,
                     reference: contract.reference || 0,
                     prices: []
                 });
@@ -765,7 +773,7 @@ async function updateWatchlistSnapshots() {
     if (state.watchlist.length === 0) return;
     
     const contracts = state.watchlist.map(item => ({
-        security_type: 'STK',
+        security_type: item.security_type || 'STK',
         exchange: item.exchange,
         code: item.code
     }));
@@ -837,6 +845,10 @@ function renderWatchlist() {
         const rateStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
         const rateClass = rateVal > 0 ? 'badge-up' : (rateVal < 0 ? 'badge-down' : 'metric-subtitle');
         
+        const orderBtnHtml = item.security_type === 'IND' 
+            ? '' 
+            : `<button class="watchlist-order-btn" title="開啟下單面板">下單</button>`;
+
         div.innerHTML = `
             <div class="watchlist-info">
                 <span class="watchlist-code">${item.code}</span>
@@ -847,15 +859,18 @@ function renderWatchlist() {
                 <span class="watchlist-price">${priceStr}</span>
                 <span class="${rateClass}">${rateStr}</span>
             </div>
-            <button class="watchlist-order-btn" title="開啟下單面板">下單</button>
+            ${orderBtnHtml}
         `;
         container.appendChild(div);
 
         // 下單按鈕：不觸發 selectWatchlistItem
-        div.querySelector('.watchlist-order-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            openOrderDrawer(item.code, 'STK', item.close || 0, item.exchange || 'TSE');
-        });
+        const orderBtn = div.querySelector('.watchlist-order-btn');
+        if (orderBtn) {
+            orderBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openOrderDrawer(item.code, 'STK', item.close || 0, item.exchange || 'TSE');
+            });
+        }
         
         // 繪製微型走勢圖
         const canvas = document.getElementById(`spark-${item.code}`);
@@ -1005,10 +1020,11 @@ async function fetchKbarsWithCache(code) {
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 2);
     const start = startDate.toISOString().split('T')[0];
+    const secType = item ? (item.security_type || 'STK') : 'STK';
     const resp = await fetch(`${API_BASE}/data/kbars`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contract: { security_type: 'STK', exchange, code }, start, end, frequency: '1D' })
+        body: JSON.stringify({ contract: { security_type: secType, exchange, code }, start, end, frequency: '1D' })
     });
     if (!resp.ok) return null;
     const data = await resp.json();
@@ -1060,11 +1076,14 @@ async function renderDetailTickChart(code) {
     const today = new Date().toISOString().split('T')[0];
     
     try {
+        const item = state.watchlist.find(w => w.code === code);
+        const secType = item ? (item.security_type || 'STK') : 'STK';
+        const exchange = item ? (item.exchange || 'TSE') : 'TSE';
         const resp = await fetch(`${API_BASE}/data/ticks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contract: { security_type: 'STK', exchange: 'TSE', code },
+                contract: { security_type: secType, exchange, code },
                 date: today,
                 query_type: 'AllDay'
             })
