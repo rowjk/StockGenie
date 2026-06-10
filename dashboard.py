@@ -25,6 +25,7 @@ TWSE_DIVIDEND_URL = "https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL"
 TWSE_CACHE_TTL = 600  # 10 分鐘，避免高頻打 TWSE 公開 API
 _twse_cache = {}      # url -> (fetched_at_epoch, parsed_json)
 _twse_cache_lock = threading.Lock()
+_twse_needs_relaxed_ssl_lock = threading.Lock()
 _twse_needs_relaxed_ssl = False  # 一旦偵測到 TWSE 憑證鏈問題，之後直接走寬鬆模式（省去每次先失敗一輪 ~6 秒）
 
 def _roc_to_iso(roc_str):
@@ -90,7 +91,7 @@ def fetch_twse_json(url):
                         raise ssl.SSLError(str(e))
                     raise
             except ssl.SSLError:
-                with _twse_needs_relaxed_ssl_lock if 'show_warning' in globals() else _twse_cache_lock:
+                with _twse_needs_relaxed_ssl_lock:
                     if not _twse_needs_relaxed_ssl:
                         print(f"\033[93m⚠ TWSE 憑證驗證失敗（已知的 TWSE 憑證鏈問題），本次起改用寬鬆 SSL 模式：{url}\033[0m")
                         _twse_needs_relaxed_ssl = True
@@ -611,28 +612,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             history_dict[date_str] = val
             
             # 為了防範導入大批歷史資料後被每日自動存檔（POST）截斷，
-            # 只有在總筆數大於 1000 筆時，才啟動過期清理，且清理範圍放寬至 365 天（1年），至少保留 10 筆
-            if len(history_dict) > 1000:
-                cutoff = datetime.now() - timedelta(days=365)
-                pruned_dict = {}
-                for k, v in history_dict.items():
-                    try:
-                        dt = datetime.strptime(k, "%Y-%m-%d")
-                        if dt >= cutoff:
-                            pruned_dict[k] = v
-                    except ValueError:
-                        pass
-
-                if len(pruned_dict) < 10:
-                    # 清理後不足 10 筆：改取全部紀錄中最近的 10 筆（按日期遞減）
-                    recent = sorted(history_dict.keys(), reverse=True)[:10]
-                    pruned_dict = {k: history_dict[k] for k in recent}
-                history_dict = pruned_dict
+            # 只有在總筆數大於 3000 筆（約 8 年的每日資料）時，才啟動清理，只保留最近 3000 筆
+            if len(history_dict) > 3000:
+                sorted_dates = sorted(history_dict.keys(), reverse=True)
+                history_dict = {k: history_dict[k] for k in sorted_dates[:3000]}
 
             self._write_history(history_dict)
             
             # Return sorted list
-            updated_list = [{"date": k, "value": v} for k, v in sorted(pruned_dict.items())]
+            updated_list = [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
             
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
