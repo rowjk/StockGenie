@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo === SinoPac Position Monitor ===
+echo === StockGenie Position Monitor ===
 echo.
 echo [1] Query once (default)
 echo [2] Auto-refresh every 30s

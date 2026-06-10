@@ -1,5 +1,5 @@
 """
-SinoPac API Stock Dashboard Orchestrator
+StockGenie API Stock Dashboard Orchestrator
 Python Backend Server and Launcher
 """
 

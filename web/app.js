@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
+   StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
    v1.3.25 (2026-06-10)

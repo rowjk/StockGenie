@@ -1,4 +1,4 @@
-# SinoPac Genie - 實行任務與優化清單 (v1.3.25)
+# StockGenie - 實行任務與優化清單 (v1.3.25)
 
 - [x] 1. 停用伺服器端靜態檔案快取 ([dashboard.py](file:///d:/AntigravityProjects/SinoPac_API/dashboard.py))
   - [x] 於 `DashboardHandler.end_headers()` 中新增 `Cache-Control`、`Pragma`、`Expires` 標頭，徹底解決瀏覽器快取 HTML/CSS/JS 的問題。
