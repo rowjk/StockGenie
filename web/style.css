@@ -750,7 +750,7 @@ a {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    flex: 1;
+    flex: 0 0 110px;
     min-width: 0;
 }
 
@@ -769,9 +769,11 @@ a {
 }
 
 .watchlist-chart {
-    flex-shrink: 0;
-    width: 80px;
+    flex: 1;
+    min-width: 50px;
+    max-width: 160px;
     height: 32px;
+    margin: 0 16px;
 }
 
 .watchlist-price-block {
@@ -781,6 +783,7 @@ a {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    margin-left: auto;
 }
 
 .watchlist-price {
