@@ -84,6 +84,17 @@
     --color-accent-bg: var(--bg-tertiary);
 }
 
+/* ── 隱形黑白模式按鈕文字對比度修正 ── */
+[data-scheme="stealth"] .btn-primary,
+[data-scheme="stealth"] .quick-order-wrap button,
+[data-scheme="stealth"] .detail-tab.active,
+[data-scheme="stealth"] .detail-tab:hover,
+[data-scheme="stealth"] #btn-quick-order,
+[data-scheme="stealth"] #btn-add-watchlist,
+[data-scheme="stealth"] #btn-confirm-submit {
+    color: var(--bg-primary) !important;
+}
+
 /* 🟢🔴 Muted traditional color scheme */
 [data-scheme="muted"] {
     --color-up: #e11d48;          /* Soft Rose Red for Taiwan stock up */

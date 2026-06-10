@@ -2,6 +2,13 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.25 (2026-06-10)
+   - [快取] 伺服器端 DashboardHandler 新增 Cache-Control 停用快取標頭，解決瀏覽器快取舊網頁與樣式問題
+   - [排版] 強力修正隱形黑白模式下，白底按鈕及 hovered tabs 字體偏白導致文字看不見的問題，將文字顏色強制設為 bg-primary
+   - [自選] 自選清單將「顯示走勢圖」字眼修訂為「顯示趨勢圖」，以切合使用者語意
+   v1.3.24 (2026-06-10)
+   - [自選] 新增「顯示走勢圖」Toggle 切換開關，預設隱藏自選監控卡片微型走勢圖以省去 CPU 渲染與定時更新負荷
+   - [排版] 修正隱形黑白模式下，白底按鈕（新增監控按鈕、代號下單按鈕及分時/均線切換 Tab）字體偏白導致文字重疊消失的問題，將文字顏色強制指定為 bg-primary 產生黑白極簡對比
    v1.3.23 (2026-06-10)
    - [排版] 修正隱形黑白模式下，大盤指數卡片的漲跌幅徽章背景色（與卡片背景色重疊融合）之對比度，將指數徽章背景色強制指定為 bg-secondary
    v1.3.22 (2026-06-10)
@@ -54,6 +61,7 @@ let state = {
     pollingTimer: null,
     sseConnection: null,
     drawerExchange: 'TSE',
+    showSparkline: false,
     idleTimer: null,
     stockPositionUnit: 'Lot', // 'Share' 表示 API 已回傳股數（含零股）
     tradingPermitted: true,
@@ -785,6 +793,20 @@ function initWatchlistControls() {
             }
         });
     });
+
+    // 初始化自選走勢圖顯示切換開關 (預設關閉)
+    const toggleSpark = document.getElementById('toggle-sparkline');
+    if (toggleSpark) {
+        const savedShow = localStorage.getItem('showSparkline') === 'true';
+        state.showSparkline = savedShow;
+        toggleSpark.checked = savedShow;
+        
+        toggleSpark.addEventListener('change', (e) => {
+            state.showSparkline = e.target.checked;
+            localStorage.setItem('showSparkline', e.target.checked);
+            renderWatchlist();
+        });
+    }
 }
 
 async function updateWatchlistSnapshots() {
@@ -883,6 +905,10 @@ function renderWatchlist() {
         const upDisabled = index === 0 ? 'disabled style="visibility:hidden;"' : '';
         const downDisabled = index === state.watchlist.length - 1 ? 'disabled style="visibility:hidden;"' : '';
 
+        const canvasHtml = state.showSparkline
+            ? `<canvas class="watchlist-chart" id="spark-${item.code}"></canvas>`
+            : '';
+
         div.innerHTML = `
             <div class="watchlist-order-actions">
                 <button class="watchlist-order-up" ${upDisabled} title="上移">▲</button>
@@ -892,7 +918,7 @@ function renderWatchlist() {
                 <span class="watchlist-code">${item.code}</span>
                 <span class="watchlist-name">${item.name || '讀取中...'}</span>
             </div>
-            <canvas class="watchlist-chart" id="spark-${item.code}"></canvas>
+            ${canvasHtml}
             <div class="watchlist-price-block">
                 <span class="watchlist-price">${priceStr}</span>
                 <span class="${rateClass}">${rateStr}</span>
@@ -926,9 +952,11 @@ function renderWatchlist() {
             });
         }
         
-        // 繪製微型走勢圖
-        const canvas = document.getElementById(`spark-${item.code}`);
-        drawSparkline(canvas, item.prices, rateVal >= 0);
+        // 繪製微型走勢圖 (若有啟用)
+        if (state.showSparkline) {
+            const canvas = document.getElementById(`spark-${item.code}`);
+            drawSparkline(canvas, item.prices, rateVal >= 0);
+        }
     });
 }
 
