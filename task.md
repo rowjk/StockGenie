@@ -1,4 +1,9 @@
-# StockGenie - 實行任務與優化清單 (v1.5.1)
+# StockGenie - 實行任務與優化清單 (v1.5.2)
+
+## v1.5.2 — Code Review 問題修正
+- [x] 修正 `dashboard.py` 中 `_twse_needs_relaxed_ssl_lock` 鎖變數未定義 NameError 隱患，於檔頭正確聲明並調用 ([dashboard.py](dashboard.py))
+- [x] 修正資產歷史資料自動清理邏輯與手動導入衝突：放寬限制至大於 3000 筆才啟動清理，清理方式改為保留最新 3000 筆以避免過期清理直接截斷數據，同時修正 `pruned_dict` 未定義 NameError 閃退 Bug ([dashboard.py](dashboard.py))
+- [x] 配合專案規範，升級版本號至 v1.5.2 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.5.1 — 跨分頁行情輪詢降頻
 - [x] 停在美股分頁時暫停台股自選快照輪詢（`fetchData` 依 `state.activeView` 判斷），帳務 API 與 T+2 警示照常 ([app.js](web/app.js))

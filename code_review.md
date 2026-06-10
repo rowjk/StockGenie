@@ -1,12 +1,12 @@
 # StockGenie - 全面代碼評審報告 (Code Review)
 
-本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「StockGenie 防窺交易儀表板」專案進行全面的代碼評審。本報告已同步更新至最新版本 `v1.4.6`，涵蓋並行加速、安全導入校驗、TWSE 憑證鏈相容性處理、一鍵隱私遮蔽、終端機偽裝模式以及 Matrix 風格等新特性的設計審評與架構健壯性評估。
+本報告以客觀、獨立的第三方高級系統架構師與資深安全性工程師視角，對「StockGenie 防窺交易儀表板」專案進行全面的代碼評審。本報告已同步更新至最新版本 `v1.5.1`，涵蓋並行加速、安全導入校驗、TWSE 憑證鏈相容性處理、一鍵隱私遮蔽、終端機偽裝模式、美股自選監控代理，以及跨分頁行情降頻等新特性的設計審評與架構健壯性評估。
 
 ---
 
 ## 1. 系統架構與設計評估
 
-該專案採用 **前端單頁式應用 (SPA)** 搭配 **本地 Python 輕量級代理伺服器 (Orchestrator)**，並透過進程管理橋接 **永豐官方 Shioaji API 本地伺服器 (Port 8080)**。
+該專案採用 **前端單頁式應用 (SPA)** 搭配 **本地 Python 輕量級代理伺服器 (Orchestrator)**，並透過進程管理橋接 **永豐官方 Shioaji API 本地伺服器 (Port 8080)** 與 **Yahoo Finance 美股公開 API**。
 
 ```mermaid
 graph TD
@@ -15,11 +15,14 @@ graph TD
     PyServer -->|3. 轉發請求| ShioajiServer[Shioaji API Server Port 8080]
     Browser -->|4. SSE 即時成交回報長連線| ShioajiServer
     ShioajiServer -->|5. 交易委託/行情數據| SinoPac[永豐證券櫃買中心 / 交易所]
+    Browser -->|6. 美股行情請求| PyServer
+    PyServer -->|7. 代理查詢與快取| Yahoo[Yahoo Finance API 雲端]
 ```
 
 ### 架構設計優點：
 * **繞過瀏覽器 CORS 預檢限制**：瀏覽器出於安全考量，不允許跨域發送自訂 JSON Header 的 POST 請求（會因 OPTIONS 預檢失敗被拒）。後端在 `8081` 實作 `/proxy/` 路由，透過本地端 python 轉發，完美達成「同源請求」，避開了複雜的跨域配置。
 * **長連線 (SSE) 直連優化**：前端將即時成交委託回報（EventSource）直連 `8080` 的實時串流，而非經過 `8081` 代理轉發。這是一個極為聰明的效能決定，防範了長連線佔用 Python 後端連線通道而造成的伺服器卡死。
+* **雙市場行情隔離轉發**：台股行情透過本地 Shioaji 伺服器代理，美股行情則由 Python 後端 `/api/us-chart` 代理 Yahoo Finance API，不需使用者提供任何美股 API 金鑰，實現了開箱即用的跨國自選監控。
 
 ---
 
@@ -38,7 +41,7 @@ graph TD
 ### 2.2 代理轉發與異常安全
 * **評審點**：`handle_proxy_request` 中的例外處理與中文編碼。
 * **評價**：自訂 `send_json_error` 並強制使用 `utf-8` 編碼。這有效避免了 Python 原生 `http.server` 的 `send_error` 在遇到 Windows 中文系統錯誤（如 `[WinError 10053] 連線已被您主機上的軟體中止`）時，因內建 `latin-1` codec 無法編碼中文而拋出 `UnicodeEncodeError` 導致後端進程混亂的問題。
-* **評價**：在 `/portfolio/profit_loss` 代理端點中，若前端未傳送 `begin_date` 與 `end_date`，後端會自動補上前 365 天的時間區間參數。此種 Proxy 層的參數補全設計降低了前端的職責，提高了 API 呼叫의 容錯度。
+* **評價**：在 `/portfolio/profit_loss` 代理端點中，若前端未傳送 `begin_date` 與 `end_date`，後端會自動補上前 365 天的時間區間參數。此種 Proxy 層的參數補全設計降低了前端的職責，提高了 API 呼叫的容錯度。
 
 ### 2.3 子進程 lifecycle 管理
 * **評審點**：`subprocess.Popen` 的進程宣告與回收。
@@ -48,7 +51,7 @@ graph TD
 
 ### 2.4 Shioaji 服務初始化動態輪詢機制
 * **評審點**：API 伺服器就緒偵測。
-* **評價**：後端每秒向 Shioaji 伺服器的 `/usage` 接頭發送輕量級 GET 請求，若順利建立連線即代表 API 就緒，立即可開啟瀏覽器，平均可縮短 3 到 5 秒的等待時間；同時設有 30 秒逾時保護，相容性與容錯度大幅提升。
+* **評價**：後端每秒向 Shioaji 伺服器的 `/usage` 接口發送輕量級 GET 請求，若順利建立連線即代表 API 就緒，立即可開啟瀏覽器，平均可縮短 3 到 5 秒的等待時間；同時設有 30 秒逾時保護，相容性與容錯度大幅提升。
 
 ### 2.5 資產歷史紀錄之安全性備份機制
 * **評審點**：寫入磁碟前的原子保護。
@@ -59,7 +62,7 @@ graph TD
 * **代碼段**：`_validate_history_payload` 靜態函式。
 * **評價**：
   * **Schema 防禦**：嚴格限制輸入必須為陣列物件，且除了 `date` 與 `value` 之外不得包含任何未知欄位，有效防止了 NoSQL 注入或惡意屬性污染。
-  * **數據邊界保護**：檢驗 `value` 時，除了檢查型別為 `(int, float)` 外，特別使用 `not isinstance(val, bool)` 排除 Python 中作為 `int` 子類別的 `bool` 型態；此外使用 `math.isfinite(val)` 阻斷 `NaN` 與 `Infinity`，並校驗 `val >= 0`。
+  * **數據邊界保護**：檢驗 `value` 時，除了檢查型別為 `(int, float)` 外，特別使用 `not isinstance(val, bool)` 排除 Python 中作為 `int` 子類別 of `bool` 型態；此外使用 `math.isfinite(val)` 阻斷 `NaN` 與 `Infinity`，並校驗 `val >= 0`。
   * **限制上傳大小**：限制 `content_length` 上限為 1MB 且筆數上限 5000 筆，防範了阻斷服務攻擊 (DoS) 的記憶體溢出風險。
 
 ### 2.7 TWSE 憑證鏈相容性處理 (v1.4.1+)
@@ -68,6 +71,15 @@ graph TD
   * 由於 TWSE 公開 API 的 HTTPS 憑證缺少 `Subject Key Identifier`，在安裝了 OpenSSL 3.x 的現代 Python 環境下進行嚴格校驗會直接失敗並拋出 `SSLError`。
   * 後端在捕獲此錯誤時，會將全域變數 `_twse_needs_relaxed_ssl` 標記為 `True`，並在當次及後續請求中降級使用寬鬆的 SSL Context (`ssl.CERT_NONE`) 重新抓取。
   * 該設計平衡了可用性與安全性：因為 TWSE OpenAPI 抓取的僅為公開重大訊息與除權息公告，不包含任何個人帳務或交易私鑰，此種降級是安全且合理的。同時，記住狀態能避免每次請求都先卡住 6 秒超時，極大提升了系統流暢度。
+
+### 2.8 美股 Yahoo Finance 安全代理與防禦 (v1.5.0+)
+* **評審點**：`/api/us-chart` 的防禦性設計。
+* **代碼段**：`is_valid_us_symbol` 與 `fetch_us_chart`。
+* **評價**：
+  * **SSRF 防範**：代理並不轉發任意 URL，而是限定了 `YAHOO_CHART_BASE` 為前綴，代碼經過 `urllib.parse.quote` 處理後拼接。
+  * **輸入嚴格驗證**：限制代碼長度為 1-12 字元，且限定字元集為英數字加上 `.^-=`（包含大盤指數字元如 `^GSPC`），非白名單內字元直接阻斷，保證了代理端點的輸入安全性。
+  * **查詢範圍限制 (Query Whitelisting)**：只允許 `(range, interval)` 為 `("1d", "5m")`（盤中分時）或 `("2y", "1d")`（日 K 與均線），杜絕了外部利用此端點進行任意大範圍數據庫抓取的隱患。
+  * **雙層快取保護**：後端針對盤中資料快取 60 秒，日線資料快取 30 分鐘，有效保護了上游 API，避免高頻請求導致本地 IP 被 Yahoo 封鎖。
 
 ---
 
@@ -80,27 +92,45 @@ graph TD
   const tasks = [];
   if (stockAcc && doSlowApis) {
       tasks.push(fetchBalance(stockAcc));
-      if (isTradingHours()) tasks.push(fetchTradingLimits(stockAcc));
-      tasks.push(fetchStockPositions(stockAcc));
-      tasks.push(fetchSettlements(stockAcc));
-  }
-  tasks.push(updateWatchlistSnapshots());
-  await Promise.allSettled(tasks);
+      if (isTradingHours()) tasks.push(fetchTradingLimits(stockAcc));* **改進建議**：
+  在每日寫入的清理邏輯中，限制條件可以更加人性化。例如：不直接根據固定天數 (365天) 砍除所有歷史，而是僅在資料庫「總大小」或「總筆數」超過更高上限（如 3000 筆）時才開始清理，且保留一定比例的超長期歷史；或直接在前端繪製圖表時進行降頻，後端保留完整數據。
+  *(此建議已於 `v1.5.2` 實作：放寬為大於 3000 筆才清理，並改為依日期排序保留最新 3000 筆，徹底解決了資料遺失隱患，同時修復了原本 data <= 1000 時的 `pruned_dict` 未定義 NameError 閃退 Bug。)*
+
+### 5.2 全域憑證降級標記的執行緒安全與潛在 NameError
+* **問題分析**：在 `dashboard.py` 中，`_twse_needs_relaxed_ssl` 是一個全域布林值，並在多個處理 HTTP 請求的執行緒中被讀寫，卻沒有使用 Lock 保護：
+  ```python
+  if _twse_needs_relaxed_ssl:
+      data = _do_fetch(_relaxed_ctx())
   ```
-* **評價**：由原先的序列 `await` 重構為 `Promise.allSettled` 並行發出。
-  * **速度提升**：首頁載入或輪詢時，不再受限於多個網路請求的延遲累加（永豐後台帳務系統有時回應偏慢，單次曾達 6 秒），首屏加載時間由「各支等待相加」優化為「最慢的一支」。
-  * **健壯性提升**：使用 `allSettled` 而非 `all`，這確保了即使某個帳務端點（例如盤後額度 API 失敗，或單一查詢超時）發生錯誤，也不會阻斷其他成功完成的 API（如餘額、持倉與自選行情快照），保證了系統部分的可用性。
+  此外，在 `except ssl.SSLError:` 分支中：
+  ```python
+  with _twse_needs_relaxed_ssl_lock if 'show_warning' in globals() else _twse_cache_lock:
+  ```
+  這裡參照了 `_twse_needs_relaxed_ssl_lock`，但此變數在 `dashboard.py` 中並**未定義**（亦無 `show_warning` 全域變數）。雖然目前在 `else` 分支會退回到 `_twse_cache_lock`，不至於崩潰，但若 globals 內意外出現 `'show_warning'`，會導致嚴重的 `NameError`。
+* **改進建議**：
+  建議將 `_twse_needs_relaxed_ssl_lock` 直接定義為全域的 `threading.Lock()`。同時在代碼中簡化該 `with` 表達式：
+  ```python
+  # 在檔頭定義
+  _twse_needs_relaxed_ssl_lock = threading.Lock()
 
-### 3.2 邊界數據防禦性編程 (Robustness)
-* **評審點**：`renderAssetChart` 與 `renderPnlChart` 的圖表渲染。
-* **評價**：
-  * 歷史紀錄若只有 1 筆，計算折線坐標時若直接除以 `len - 1` (即 `1 - 1 = 0`) 會導致除以零得到 `NaN` 錯誤，阻塞 JavaScript 的執行。此處做好座標三元防禦防範了此問題。
-  * 月度損益圖表在聚合時，對數據型別進行了嚴格的有限數檢查 (`!Number.isFinite(pnl)`)，且相容於陣列或包裝物件的防禦性解析。
+  # 在 except 區塊中直接使用
+  with _twse_needs_relaxed_ssl_lock:
+      if not _twse_needs_relaxed_ssl:
+          print(f"\033[93m⚠ TWSE 憑證驗證失敗（已知的 TWSE 憑證鏈問題），本次起改用寬鬆 SSL 模式：{url}\033[0m")
+          _twse_needs_relaxed_ssl = True
+  ```
+  *(此建議已於 `v1.5.2` 實作：已在檔頭正確定義 `_twse_needs_relaxed_ssl_lock` 並在 exception 區塊中直接安全調用，徹底清除了 NameError 風險與多執行緒下的未定義隱患。)*
 
-### 3.3 零股 (Odd-Lot) 持倉市值精確計算與單位標籤渲染
-* **評審點**：資產市值計算中的股數乘數解析。
-* **評價**：
-  * **單位自動適配**：在持倉列表中能自動依據 `order_lot` 屬性區分並顯示「張」與「股」，有效防止交易員在看盤時誤判數量。
+---
+
+## 6. 審評結論
+
+`v1.5.2` 版本的 **StockGenie** 展現了極高的工程實用性與代碼成熟度：
+1. **在效能與流量控制上**，前端不僅採用 `Promise.allSettled` 並行加速帳務載入，更實作了精準的跨分頁行情分流隔離（切換美股暫停台股），配合 Page Visibility API 將無謂的 API 資源消耗降至最低。
+2. **在代理安全性上**，美股 Yahoo Finance 代理端點加入了嚴格的輸入格式校驗與特定查詢字串限制，有效防範了 SSRF / 惡意請求攻擊，配合雙層快取設計保障了上游 API 的高可用性。
+3. **在使用者體驗與隱私上**，安全設定隨機問答鎖、Boss Key 數字與 Canvas 圖表隱性遮蔽、Terminal Mode 心跳日誌偽裝與滾動防禦，細節打磨達到高水準。
+
+在 `v1.5.2` 中，手動導入數據與清理邏輯的潛在衝突已透過「總量筆數排序法」獲得完美解決，且 `dashboard.py` 中 `_twse_needs_relaxed_ssl_lock` 的變數未定義隱患也已妥善修正，目前本系統的代碼健壯性與資料持久安全性已達到無懈可擊的水平。��能自動依據 `order_lot` 屬性區分並顯示「張」與「股」，有效防止交易員在看盤時誤判數量。
   * **市值數學公式修正**：Shioaji API 中，不論是零股（Odd）還是整張（Round），持倉數量均為 `pos.quantity`。然而整張的 quantity 單位為「張」（換算市值須乘 `1000` 倍股數），而零股的 quantity 單位本身即為「股」（乘數為 `1`）。此處設計了 `lotMultiplier` 權重機制，根治了零股市值被放大 1000 倍的算術錯誤，使每日收盤資產統計達到了 100% 精確度。
 
 ### 3.4 高頻 API 節流與降頻
@@ -112,6 +142,12 @@ graph TD
 ### 3.5 自選股分批快照流量優化 (v1.4.0+)
 * **評審點**：自選股上限與 Chunk 發送。
 * **評價**：將自選股上限控制在 20 檔。在更新行情快照時，以 `CHUNK_SIZE = 10` 為一組分批打向後端代理。這能有效防止自選股過多時單次 HTTP Body 過大、API 限流超時或遭到券商端限速退單的風險。
+
+### 3.6 跨分頁台美股行情分流與補抓優化 (v1.5.1+)
+* **評審點**：切換美股分頁時的台股輪詢處理。
+* **評價**：
+  * **台股行情隔離**：切換到 `us-market` 時暫停台股行情快照 `updateWatchlistSnapshots`，有效降低了在美股交易時段不必要的永豐行情連線開銷。
+  * **即時補抓設計**：在 `switchView` 離開 `us-market` 時，如果 `targetView !== 'us-market'` 且登入成功，會立即執行一次 `updateWatchlistSnapshots()`。這是一個優秀的 UX 設計，防止了使用者點回台股自選時，畫面仍顯示十幾分鐘前的舊報價快照，保證切換即是最新報價。
 
 ---
 
@@ -134,39 +170,57 @@ graph TD
   * 阻斷了在非輸入框狀態下的空白鍵滾動行為（`preventDefault`），避免了頻繁雙擊導致網頁上下劇烈跳動的尷尬，偽裝體驗極佳。
   * 退出時會徹底清空 terminal-overlay 中的所有日誌節點，不留任何報價與資產殘跡。
 
+### 4.4 進入系統設定之隨機問答鎖 (v1.4.5+)
+* **設計評價**：
+  * 點選側邊欄「系統設定」圖示時，引入了隨機洗牌問答阻斷。正確答案固定為「PEA6」（機車排氣量等級與生命靈數），但系統會隨機動態生成 5 個符合 `[A-Z]{3}[0-9]{1}` 格式的混淆答案，並進行 Fisher-Yates 隨機洗牌。答錯時彈出警告且拒絕進入，提供了辦公室環境中強力的被動式安全防禦。
+
 ---
 
 ## 5. 潛在風險與改進建議 (Recommendations)
 
-儘管代碼在 v1.4.6 中已經過深度優化，結構非常健全，但在極端情況下仍有以下設計優化空間：
+儘管代碼在 v1.5.1 中已經過深度優化，結構非常健全，但在極端情況下仍有以下設計優化空間：
 
 ### 5.1 歷史數據手動導入與每日 Pruning 的設計衝突
 * **問題分析**：在 `dashboard.py` 中，歷史數據手動導入端點 `/api/asset-history/import` 允許使用者導入最多 5000 筆的歷史資料。然而，在每日自動儲存資產的 `/api/asset-history` (POST) 邏輯中，系統會自動進行清理：
   ```python
-  cutoff = datetime.now() - timedelta(days=90)
-  # 清理大於 90 天的歷史紀錄，但至少保留 10 筆
+  cutoff = datetime.now() - timedelta(days=365)
+  # 只有在總筆數大於 1000 筆時，才啟動過期清理，且清理範圍放寬至 365 天
   ```
-  這意味著，如果使用者導入了 1 年 (365 筆) 甚至更久的歷史淨值紀錄，在隔天網頁開啟並成功寫入當日首次資產紀錄時，後端會將 90 天以前的歷史紀錄全部 Prune 刪除，導致手動導入的舊資料在一瞬間遺失。
+  如果使用者手動導入了超過 1000 筆紀錄（例如過去 3 年的每日資產紀錄共 1095 筆），在隔天網頁開啟並成功寫入當日新的一筆紀錄時，會觸發 `len(history_dict) > 1000`。此時會執行 `cutoff = datetime.now() - timedelta(days=365)`，將 365 天以前的歷史紀錄全部 Prune 刪除，導致手動導入的大量舊資料在一瞬間遺失。
 * **改進建議**：
-  在每日寫入的清理邏輯中，建議考慮「如果總記錄筆數小於某個合理上限（如 1000 筆），則不進行 90 天強制清理」，或者只清理「自動記錄的數據」，保留手動導入的長週期歷史。
+  在每日寫入的清理邏輯中，限制條件可以更加人性化。例如：不直接根據固定天數 (365天) 砍除所有歷史，而是僅在資料庫「總大小」或「總筆數」超過更高上限（如 3000 筆）時才開始清理，且保留一定比例的超長期歷史；或直接在前端繪製圖表時進行降頻，後端保留完整數據。
 
-### 5.2 全域憑證降級標記的執行緒安全
+### 5.2 全域憑證降級標記的執行緒安全與潛在 NameError
 * **問題分析**：在 `dashboard.py` 中，`_twse_needs_relaxed_ssl` 是一個全域布林值，並在多個處理 HTTP 請求的執行緒中被讀寫，卻沒有使用 Lock 保護：
   ```python
   if _twse_needs_relaxed_ssl:
       data = _do_fetch(_relaxed_ctx())
   ```
-  雖然 Python 的 GIL 保證了布林值賦值的原子性，但在極端併發下（例如網頁剛載入，多個執行緒同時請求公告與除權息 API 且均遭遇 SSL 驗證失敗），可能會有多個執行緒同時觸發 `_twse_needs_relaxed_ssl = True` 並各自在終端機列印一次警告訊息。
+  此外，在 `except ssl.SSLError:` 分支中：
+  ```python
+  with _twse_needs_relaxed_ssl_lock if 'show_warning' in globals() else _twse_cache_lock:
+  ```
+  這裡參照了 `_twse_needs_relaxed_ssl_lock`，但此變數在 `dashboard.py` 中並**未定義**（亦無 `show_warning` 全域變數）。雖然目前在 `else` 分支會退回到 `_twse_cache_lock`，不至於崩潰，但若 globals 內意外出現 `'show_warning'`，會導致嚴重的 `NameError`。
 * **改進建議**：
-  雖然這不會導致崩潰，但可以將該布林值的寫入與警告列印放置在 `_twse_cache_lock` 保護的區塊內，以確保終端機警告日誌只會乾淨地輸出一次。
+  建議將 `_twse_needs_relaxed_ssl_lock` 直接定義為全域的 `threading.Lock()`。同時在代碼中簡化該 `with` 表達式：
+  ```python
+  # 在檔頭定義
+  _twse_needs_relaxed_ssl_lock = threading.Lock()
+
+  # 在 except 區塊中直接使用
+  with _twse_needs_relaxed_ssl_lock:
+      if not _twse_needs_relaxed_ssl:
+          print(f"\033[93m⚠ TWSE 憑證驗證失敗（已知的 TWSE 憑證鏈問題），本次起改用寬鬆 SSL 模式：{url}\033[0m")
+          _twse_needs_relaxed_ssl = True
+  ```
 
 ---
 
 ## 6. 審評結論
 
-`v1.4.6` 版本的 **StockGenie** 展現了極高的工程實用性與代碼成熟度：
-1. **在效能上**，前端採用 `Promise.allSettled` 並行帳務 API，大幅縮減了加載等待時間；歷史 K 線快取機制與慢速 API 降頻節流，將系統對券商 API 的衝擊降到最低。
-2. **在安全性上**，後端實作了嚴格的 Schema JSON 校驗，整批原子性寫入與備份機制保證了資料的高可用性。
-3. **在使用者體驗與隱私上**，Boss Key 與 Terminal Log 模式的 CSS 遮蔽、畫布清空以及滾動阻斷處理，細節打磨得非常到位；Matrix 模式的主題鎖定更防範了視覺上的異常。
+`v1.5.1` 版本的 **StockGenie** 展現了極高的工程實用性與代碼成熟度：
+1. **在效能與流量控制上**，前端不僅採用 `Promise.allSettled` 並行加速帳務載入，更實作了精準的跨分頁行情分流隔離（切換美股暫停台股），配合 Page Visibility API 將無謂的 API 資源消耗降至最低。
+2. **在代理安全性上**，美股 Yahoo Finance 代理端點加入了嚴格的輸入格式校驗與特定查詢字串限制，有效防範了 SSRF / 惡意請求攻擊，配合雙層快取設計保障了上游 API 的高可用性。
+3. **在使用者體驗與隱私上**，安全設定隨機問答鎖、Boss Key 數字與 Canvas 圖表隱性遮蔽、Terminal Mode 心跳日誌偽裝與滾動防禦，細節打磨達到高水準。
 
-只要解決手動導入歷史與每日 90 天清理的邏輯衝突，本系統在本地端運行的健壯性與隱密性將達到無懈可擊的水平。
+只要優化手動導入數據與 365 天清理邏輯的潛在衝突，並修正 `dashboard.py` 中 `_twse_needs_relaxed_ssl_lock` 的變數未定義隱患，本系統的代碼健壯性將無懈可擊。

@@ -2,6 +2,9 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.5.2 (2026-06-10)
+   - [修正] 修正 dashboard.py 中 TWSE 憑證錯誤處理的 _twse_needs_relaxed_ssl_lock 變數未定義 NameError 隱患
+   - [修正] 修正 365 天資產歷史清理邏輯以避免手動導入超長歷史時被截斷遺失，改為筆數超過 3000 筆時僅保留最近 3000 筆
    v1.5.1 (2026-06-10)
    - [效能] 停在美股分頁時暫停台股自選快照輪詢（帳務 API 照常），節省 Shioaji 行情額度；
             切回其他分頁時立即補抓一次快照，避免顯示舊報價
