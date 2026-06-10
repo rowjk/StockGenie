@@ -2,6 +2,8 @@
    SinoPac API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.3.21 (2026-06-10)
+   - [排版] 優化自選監控卡片於寬螢幕下的排版對齊，使微型走勢圖（Sparkline）優雅置中，並增加視窗 resize 時重繪走勢圖的防禦機制
    v1.3.20 (2026-06-10)
    - [自選] 支援自選監控清單自訂排序，於卡片左側提供微型上移（▲）/下移（▼）按鈕
    - [大盤] 大盤指數（IND）卡片加上淡灰底色，且漲跌幅徽章調整為顯示「漲跌點數 (漲跌百分比)」
@@ -66,6 +68,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 定時監控伺服器狀態 (每 60 秒，降低 /auth/usage 呼叫頻率)
     setInterval(checkServerStatus, 60000);
+
+    // 視窗調整大小時，重繪自選股微型走勢圖
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            renderWatchlist();
+        }, 150);
+    });
 });
 
 // ── 系統環境與主題設定 ────────────────────────────────────────────────────
