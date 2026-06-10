@@ -1,4 +1,9 @@
-# StockGenie - 實行任務與優化清單 (v1.4.3)
+# StockGenie - 實行任務與優化清單 (v1.4.4)
+
+## v1.4.4 — Page Visibility 流量與效能優化、TWSE 下載壓縮
+- [x] 引入 Page Visibility API，在網頁處於背景/最小化（`hidden`）時自動暫停 API 輪詢，回到前景（`visible`）時重啟，節省大量頻寬流量與 CPU 負荷 ([app.js](web/app.js))
+- [x] 後端 fetch_twse_json 加入 `Accept-Encoding: gzip` 請求頭與 gzip 解壓縮，使 TWSE 公告與除權息 OpenAPI 的下載流量減少 80% 以上 ([dashboard.py](dashboard.py))
+- [x] 配合專案規範，升級版本號至 v1.4.4 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.4.3 — 歷史資產備份與 TWSE 併發警告修正
 - [x] 修正手動導入歷史資產與每日自動 Pruning 90 天清理之設計衝突，限制總筆數大於 1000 筆才啟動清理且清理範圍放寬至 365 天 ([dashboard.py](dashboard.py))
