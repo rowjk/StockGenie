@@ -2,6 +2,9 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.5.1 (2026-06-10)
+   - [效能] 停在美股分頁時暫停台股自選快照輪詢（帳務 API 照常），節省 Shioaji 行情額度；
+            切回其他分頁時立即補抓一次快照，避免顯示舊報價
    v1.5.0 (2026-06-10)
    - [功能] 新增「美股指數」分頁：美股自選監控（Yahoo Finance 經 /api/us-chart 後端代理，延遲約 15 分鐘）
    - [功能] 任意美股代碼新增/移除/排序，localStorage (usWatchlist) 持久化，預設 ^GSPC+VOO，上限 20 檔
@@ -251,6 +254,7 @@ function initNavigation() {
 }
 
 function switchView(targetView) {
+    const prevView = state.activeView; // 記錄切換前分頁（離開美股時補抓台股快照用）
     const items = document.querySelectorAll('.sidebar-item');
     items.forEach(item => {
         if (item.getAttribute('data-view') === targetView) {
@@ -277,6 +281,11 @@ function switchView(targetView) {
     // 美股行情輪詢僅在「美股指數」分頁時啟用，離開即停止以節省流量
     if (targetView === 'us-market') startUsMarket();
     else stopUsMarket();
+
+    // 離開美股分頁時立即補抓一次台股自選快照（停留期間快照是暫停的）
+    if (prevView === 'us-market' && targetView !== 'us-market' && state.selectedAccount) {
+        updateWatchlistSnapshots();
+    }
 }
 
 // 生成 5 個隨機且符合規範的錯誤答案 [A-Z]{3}[0-9]{1}
@@ -573,8 +582,11 @@ async function fetchData() {
         tasks.push(fetchStockPositions(stockAcc));
         tasks.push(fetchSettlements(stockAcc));
     }
-    // 自選股即時資訊（每次都跑，最需要即時，不再被帳務查詢卡住）
-    tasks.push(updateWatchlistSnapshots());
+    // 自選股即時資訊（最需要即時，不再被帳務查詢卡住）
+    // v1.5.1：停在美股分頁時暫停台股自選快照（帳務照常），節省 Shioaji API 額度
+    if (state.activeView !== 'us-market') {
+        tasks.push(updateWatchlistSnapshots());
+    }
     await Promise.allSettled(tasks);
 
     // 交割款預估餘額依賴最新 balance，全部完成後再渲染
