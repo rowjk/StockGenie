@@ -2,9 +2,10 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.4.5 (2026-06-10)
+   - [安全] 進入「系統設定」前新增問答驗證機制，需在隨機排序的選單中答對「機車+生命靈數 (PEA6)」才能進入
    v1.4.4 (2026-06-10)
    - [效能] 支援 Page Visibility API，當網頁處於背景/最小化時自動暫停輪詢，顯示時恢復，節省大量頻寬流量與 CPU 資源
-   v1.4.3 (2026-06-10)
    - [安全] 限制過期清理僅在總筆數大於 1000 筆時才啟動，並放寬至 365 天，防止手動導入歷史被每日存檔截斷
    - [安全] TWSE 憑證降級警告加上 _twse_cache_lock 保護防止併發多重列印
    v1.4.2 (2026-06-10)
@@ -227,26 +228,104 @@ function initNavigation() {
             const targetView = item.getAttribute('data-view');
             if (!targetView) return;
             
-            // 更新選取狀態的樣式
-            items.forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
-            
-            // 切換對應的面板視窗
-            document.querySelectorAll('.view-section').forEach(section => {
-                section.classList.remove('active');
-            });
-            document.getElementById(`view-${targetView}`).classList.add('active');
-            
-            state.activeView = targetView;
-            
-            // 特定視窗切換時的數據刷新
-            if (targetView === 'dashboard') {
-                renderAssetChart();
-            } else if (targetView === 'settings') {
-                renderHistoryTable();
+            // 進入「系統設定」前進行安全問答驗證
+            if (targetView === 'settings') {
+                openSettingsLockModal();
+                return;
             }
+            
+            switchView(targetView);
         });
     });
+}
+
+function switchView(targetView) {
+    const items = document.querySelectorAll('.sidebar-item');
+    items.forEach(item => {
+        if (item.getAttribute('data-view') === targetView) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+    
+    document.querySelectorAll('.view-section').forEach(section => {
+        section.classList.remove('active');
+    });
+    const sectionEl = document.getElementById(`view-${targetView}`);
+    if (sectionEl) sectionEl.classList.add('active');
+    
+    state.activeView = targetView;
+    
+    if (targetView === 'dashboard') {
+        renderAssetChart();
+    } else if (targetView === 'settings') {
+        renderHistoryTable();
+    }
+}
+
+// 生成 5 個隨機且符合規範的錯誤答案 [A-Z]{3}[0-9]{1}
+function generateIncorrectAnswers() {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const digits = '0123456789';
+    const results = new Set();
+    while (results.size < 5) {
+        const l1 = letters[Math.floor(Math.random() * letters.length)];
+        const l2 = letters[Math.floor(Math.random() * letters.length)];
+        const l3 = letters[Math.floor(Math.random() * letters.length)];
+        const d = digits[Math.floor(Math.random() * digits.length)];
+        const ans = `${l1}${l2}${l3}${d}`;
+        if (ans !== 'PEA6') {
+            results.add(ans);
+        }
+    }
+    return Array.from(results);
+}
+
+// 系統設定防護驗證 Modal 控制
+function openSettingsLockModal() {
+    const overlay = document.getElementById('settings-lock-modal-overlay');
+    const select = document.getElementById('settings-lock-select');
+    const errorEl = document.getElementById('settings-lock-error');
+    const submitBtn = document.getElementById('btn-settings-lock-submit');
+    const cancelBtn = document.getElementById('btn-settings-lock-cancel');
+    
+    if (!overlay || !select || !errorEl) return;
+    
+    errorEl.style.display = 'none';
+    select.innerHTML = '<option value="">-- 請選擇正確答案 --</option>';
+    
+    const correctAnswer = 'PEA6';
+    const incorrects = generateIncorrectAnswers();
+    
+    // 合併並隨機排序 (Fisher-Yates Shuffle)
+    const options = [correctAnswer, ...incorrects];
+    for (let i = options.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [options[i], options[j]] = [options[j], options[i]];
+    }
+    
+    options.forEach(opt => {
+        const op = document.createElement('option');
+        op.value = opt;
+        op.textContent = opt;
+        select.appendChild(op);
+    });
+    
+    overlay.classList.add('active');
+    
+    submitBtn.onclick = () => {
+        if (select.value === correctAnswer) {
+            overlay.classList.remove('active');
+            switchView('settings');
+        } else {
+            errorEl.style.display = 'block';
+        }
+    };
+    
+    cancelBtn.onclick = () => {
+        overlay.classList.remove('active');
+    };
 }
 
 // ── API 伺服器狀態與登入連線管理 ──────────────────────────────────────────

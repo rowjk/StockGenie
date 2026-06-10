@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.4.4">
+    <link rel="stylesheet" href="style.css?v=1.4.5">
 </head>
 <body>
     <div class="app-container">
@@ -546,7 +546,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.4.4</span>
+                    <span>版本號: v1.4.5</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
@@ -689,6 +689,37 @@
         </div>
     </div>
 
-    <script src="app.js?v=1.4.4"></script>
+    <!-- ── Settings Verification Modal (v1.4.5) ── -->
+    <div class="modal-overlay" id="settings-lock-modal-overlay">
+        <div class="modal" id="settings-lock-modal">
+            <div class="modal-header">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>系統安全驗證</span>
+            </div>
+            <div class="modal-content">
+                <p style="margin-bottom: 16px; color: var(--text-secondary); font-size: 0.95rem;">
+                    進入系統設定前，請回答以下安全驗證問題：
+                </p>
+                <div class="form-group">
+                    <span class="form-label" style="margin-bottom: 4px;">問題：機車+生命靈數</span>
+                    <select class="form-select font-mono" id="settings-lock-select" style="font-family: var(--font-mono);">
+                        <option value="">-- 請選擇正確答案 --</option>
+                    </select>
+                </div>
+                <div id="settings-lock-error" style="color: var(--color-down); font-size: 0.85rem; margin-top: 10px; display: none;">
+                    ❌ 驗證失敗，請選擇正確答案！
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btn-settings-lock-cancel">取消</button>
+                <button class="btn-primary" id="btn-settings-lock-submit">確認進入</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=1.4.5"></script>
 </body>
 </html>

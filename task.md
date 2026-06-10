@@ -1,4 +1,10 @@
-# StockGenie - 實行任務與優化清單 (v1.4.4)
+# StockGenie - 實行任務與優化清單 (v1.4.5)
+
+## v1.4.5 — 系統設定問答防護驗證
+- [x] 於 `index.html` 新增安全驗證對話框 HTML 結構 ([index.html](web/index.html))
+- [x] 重構 `initNavigation` 抽離 `switchView` 導覽切換函式，攔截設定導覽並呼叫驗證對話框 ([app.js](web/app.js))
+- [x] 實作隨機錯誤答案生成與洗牌邏輯，驗證成功才切換，驗證失敗顯示錯誤，取消則維持原畫面 ([app.js](web/app.js))
+- [x] 配合專案規範，升級版本號至 v1.4.5 ([index.html](web/index.html), [app.js](web/app.js), [README.md](README.md), [task.md](task.md))
 
 ## v1.4.4 — Page Visibility 流量與效能優化、TWSE 下載壓縮
 - [x] 引入 Page Visibility API，在網頁處於背景/最小化（`hidden`）時自動暫停 API 輪詢，回到前景（`visible`）時重啟，節省大量頻寬流量與 CPU 負荷 ([app.js](web/app.js))
