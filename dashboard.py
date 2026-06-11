@@ -372,6 +372,34 @@ def _wait_port_released(host="127.0.0.1", port=8080, timeout=5.0):
         time.sleep(0.3)
     return False
 
+def _kill_shioaji_on_port(port=8080):
+    """尋找並強制結束佔用 Port 8080 的 shioaji 進程（防範前次異常殘留的進程阻礙重啟）。"""
+    import subprocess
+    try:
+        # 僅適用於 Windows
+        if sys.platform != "win32":
+            return
+        cmd = f'netstat -ano | findstr :{port}'
+        output = subprocess.check_output(cmd, shell=True).decode('utf-8', errors='ignore')
+        pids = set()
+        for line in output.strip().split('\n'):
+            parts = line.split()
+            if len(parts) >= 5 and ('LISTENING' in parts or 'LISTEN' in parts):
+                pids.add(parts[-1])
+        
+        for pid in pids:
+            # 檢查是否為 shioaji.exe 或 python 進程
+            try:
+                proc_info = subprocess.check_output(f'tasklist /FI "PID eq {pid}"', shell=True).decode('utf-8', errors='ignore')
+                if "shioaji" in proc_info.lower() or "python" in proc_info.lower():
+                    print(f"\033[93m⚠ 偵測到殘留的 Shioaji/Python 進程 (PID: {pid}) 佔用 Port {port}，強制結束中...\033[0m")
+                    subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                # 備用方案：直接嘗試 taskkill
+                subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"嘗試清除 Port {port} 殘留進程時發生錯誤: {e}")
+
 def start_shioaji_server(env_dict):
     """終止既有 Shioaji 守護進程並以新環境變數重啟。
 
@@ -417,8 +445,12 @@ def start_shioaji_server(env_dict):
             except Exception as e:
                 print(f"⚠ 終止舊進程時發生異常：{e}")
             shioaji_proc = None
-            if not _wait_port_released():
-                print("\033[93m⚠ Port 8080 在等待時間內未釋放，仍嘗試啟動新進程...\033[0m")
+        
+        # 額外清理：確保 Port 8080 無殘留 shioaji.exe / python 進程
+        _kill_shioaji_on_port(8080)
+
+        if not _wait_port_released():
+            print("\033[93m⚠ Port 8080 在等待時間內未釋放，仍嘗試啟動新進程...\033[0m")
         try:
             print(f"正在啟動 Shioaji API 伺服器，執行檔路徑：{shioaji_bin}")
             shioaji_proc = subprocess.Popen(
