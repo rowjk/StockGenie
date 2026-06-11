@@ -14,7 +14,7 @@ Demo 模式：前端 `smartFetch` 攔截，記憶體生成假數據 + Random Wal
 | 端點 | 方法 | 說明 |
 |---|---|---|
 | `/api/credentials` | GET | 回遮蔽後清單 + active_index |
-| `/api/credentials/save` | POST | index=-1 新增（金鑰必填且非遮蔽）；否則修改（遮蔽欄位保留原值）。需 `verification_code:"PEA6"`（錯誤 403）。改到啟用中 → 熱套用 |
+| `/api/credentials/save` | POST | index=-1 新增（金鑰必填且非遮蔽）；否則修改（遮蔽欄位保留原值）。需 `verification_code`（預設碼）（錯誤 403）。改到啟用中 → 熱套用 |
 | `/api/credentials/switch` | POST | 改 active_index、寫 .env、背景重啟 shioaji。回應含 `restarting:true` |
 | `/api/credentials/delete` | POST | 最後一組/啟用中拒絕（400）；刪除 index < active 時 active 自動 -1 |
 
