@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 逐一初始化，任一失敗不中斷後續（防止快取版 HTML 缺少元素時全崩）
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
                       initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
-                      initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt,
+                      initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt, initOrderMgmt,
                       initDemoMode]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
@@ -806,17 +806,128 @@ function renderPendingOrders(pending) {
         const price = (s.modified_price > 0 ? s.modified_price : o.price) || 0; // 改價後以新價為準
         const unit = o.order_lot === 'IntradayOdd' ? '股' : '張';
         const name = _lookupStockName(c.code);
+        const effQty = _effectiveQty(t); // v1.7.1 有效委託量 = order_quantity - cancel_quantity（預約單回退原委託量）
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td class="mono">${_tsToTimeStr(s.order_ts)}</td>
             <td class="mono">${c.code || '--'}${name ? ` <span style="color:var(--text-muted)">${name}</span>` : ''}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
             <td class="mono mask-money">${formatDecimal(price, 2)}</td>
-            <td class="mono mask-money">${formatVolume(s.order_quantity || o.quantity)} ${unit}</td>
+            <td class="mono mask-money">${formatVolume(effQty)} ${unit}</td>
             <td class="mono mask-money">${formatVolume(s.deal_quantity || 0)}</td>
             <td style="color:${s.status === 'PartFilled' ? 'var(--color-accent)' : 'var(--text-secondary)'}">${STATUS_LABELS[s.status] || s.status}</td>`;
+        const actionTd = document.createElement('td');
+        [['改價', 'price'], ['減量', 'qty'], ['刪單', 'cancel']].forEach(([label, mode]) => {
+            const btn = document.createElement('button');
+            btn.className = 'btn-secondary btn-table-action';
+            btn.textContent = label;
+            btn.onclick = () => openOrderMgmt(mode, t);
+            actionTd.appendChild(btn);
+        });
+        tr.appendChild(actionTd);
         tbody.appendChild(tr);
     });
+}
+
+
+// ── v1.7.1 委託單管理（改價/減量/刪單；經 OpenAPI 確認三端點均以 trade_id 識別） ──
+let _mgmtCtx = null; // { mode: 'price'|'qty'|'cancel', trade }
+
+function _effectiveQty(t) {
+    const o = t.order || {}, s = t.status || {};
+    return (s.order_quantity ? s.order_quantity - (s.cancel_quantity || 0) : o.quantity) || 0;
+}
+
+function openOrderMgmt(mode, trade) {
+    if (!state.tradingPermitted) {
+        alert("下單權限關閉");
+        return;
+    }
+    _mgmtCtx = { mode, trade };
+    const o = trade.order || {}, st = trade.status || {}, c = trade.contract || {};
+    const unit = o.order_lot === 'IntradayOdd' ? '股' : '張';
+    const effQty = _effectiveQty(trade);
+    const remaining = effQty - (st.deal_quantity || 0); // 剩餘可動數量
+    const curPrice = (st.modified_price > 0 ? st.modified_price : o.price) || 0;
+
+    document.getElementById('mgmt-trade-id').textContent = o.id || '--';
+    document.getElementById('mgmt-code').textContent = c.code || '--';
+    document.getElementById('mgmt-current').textContent =
+        `${formatDecimal(curPrice, 2)} 元 × ${formatVolume(effQty)} ${unit}（已成交 ${formatVolume(st.deal_quantity || 0)}）`;
+
+    const inputGroup = document.getElementById('mgmt-input-group');
+    const input = document.getElementById('mgmt-input');
+    const warning = document.getElementById('mgmt-cancel-warning');
+    const title = document.getElementById('order-mgmt-title');
+    const label = document.getElementById('mgmt-input-label');
+    const hint = document.getElementById('mgmt-hint');
+
+    if (mode === 'price') {
+        title.textContent = '委託單改價';
+        label.textContent = '新委託價格';
+        input.step = '0.01'; input.min = '0.01'; input.value = curPrice ? curPrice.toFixed(2) : '';
+        hint.textContent = '改價後委託單將以新價格重新排隊。';
+        inputGroup.style.display = ''; warning.style.display = 'none';
+    } else if (mode === 'qty') {
+        title.textContent = '委託單減量';
+        label.textContent = `減少數量（${unit}）`;
+        input.step = '1'; input.min = '1'; input.max = String(remaining); input.value = '1';
+        hint.textContent = `券商規則僅能減量，無法增量；目前剩餘 ${formatVolume(remaining)} ${unit}，全減即等同刪單。`;
+        inputGroup.style.display = ''; warning.style.display = 'none';
+    } else {
+        title.textContent = '刪除委託單確認';
+        inputGroup.style.display = 'none'; warning.style.display = '';
+    }
+    document.getElementById('order-mgmt-modal-overlay').classList.add('active');
+}
+
+function closeOrderMgmt() {
+    document.getElementById('order-mgmt-modal-overlay').classList.remove('active');
+    _mgmtCtx = null;
+}
+
+async function submitOrderMgmt() {
+    if (!_mgmtCtx) return;
+    const { mode, trade } = _mgmtCtx;
+    const tradeId = (trade.order || {}).id;
+    const remaining = _effectiveQty(trade) - ((trade.status || {}).deal_quantity || 0);
+    const val = parseFloat(document.getElementById('mgmt-input').value);
+
+    let endpoint, payload, actionText;
+    if (mode === 'price') {
+        if (isNaN(val) || val <= 0) { alert('請輸入有效的新價格。'); return; }
+        endpoint = '/order/update_price'; payload = { trade_id: tradeId, price: val }; actionText = '改價';
+    } else if (mode === 'qty') {
+        const q = parseInt(document.getElementById('mgmt-input').value);
+        if (isNaN(q) || q <= 0 || q > remaining) { alert(`請輸入 1 ~ ${remaining} 之間的減量數。`); return; }
+        endpoint = '/order/update_qty'; payload = { trade_id: tradeId, quantity: q }; actionText = '減量';
+    } else {
+        endpoint = '/order/cancel_order'; payload = { trade_id: tradeId }; actionText = '刪單';
+    }
+
+    closeOrderMgmt();
+    try {
+        const resp = await smartFetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (resp.ok) {
+            showToastNotification(`委託單 #${tradeId} ${actionText}要求已送出，等待交易所回報...`);
+            setTimeout(fetchPendingOrders, 1200); // 略等回報後重拉（SSE 亦會觸發）
+        } else {
+            alert(`${actionText}失敗：${await resp.text()}`);
+        }
+    } catch (e) {
+        console.error(`委託單${actionText} API 調用失敗`, e);
+    }
+}
+
+function initOrderMgmt() {
+    const overlay = document.getElementById('order-mgmt-modal-overlay');
+    document.getElementById('btn-mgmt-cancel').onclick = closeOrderMgmt;
+    document.getElementById('btn-mgmt-submit').onclick = submitOrderMgmt;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOrderMgmt(); });
 }
 
 // ── v1.7.0 委託紀錄（最新 30 筆委託成功送出，非成交回報） ────────────────
@@ -3574,6 +3685,7 @@ const demoState = {
     orderSeq: 1,
     tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 30）
     pendingOrders: [], // v1.7 假未成交委託（與真實 /order/trades 回傳同構）
+    cancelledIds: new Set(), // v1.7.1 已刪單號（模擬成交 timer 據此放棄成交）
 };
 
 function mockResponse(data, status = 200) {
@@ -3836,6 +3948,48 @@ function demoUsChart(urlStr) {
 }
 
 // 下單閉環模擬：買進加庫存扣餘額；賣出限假庫存內，成交後減庫存增餘額
+// ── v1.7.1 Demo 委託單管理 ──────────────────────────────────────────────
+function _demoFindPending(tradeId) {
+    return demoState.pendingOrders.find(t => t.order.id === tradeId);
+}
+
+function demoCancelOrder(bodyText) {
+    let trade_id = '';
+    try { trade_id = JSON.parse(bodyText || '{}').trade_id; } catch (e) { /* 忽略 */ }
+    const t = _demoFindPending(trade_id);
+    if (!t) return mockResponse({ error: '[DEMO 模式] 查無此委託或已成交' }, 400);
+    demoState.cancelledIds.add(trade_id);
+    t.status.status = 'Cancelled';
+    t.status.cancel_quantity = t.status.order_quantity - (t.status.deal_quantity || 0);
+    demoState.pendingOrders = demoState.pendingOrders.filter(x => x.order.id !== trade_id);
+    return mockResponse(t);
+}
+
+function demoUpdateOrder(bodyText, kind) {
+    let body = {};
+    try { body = JSON.parse(bodyText || '{}'); } catch (e) { /* 忽略 */ }
+    const t = _demoFindPending(body.trade_id);
+    if (!t) return mockResponse({ error: '[DEMO 模式] 查無此委託或已成交' }, 400);
+    if (kind === 'price') {
+        const p = Number(body.price);
+        if (!(p > 0)) return mockResponse({ error: '[DEMO 模式] 無效的新價格' }, 400);
+        t.status.modified_price = p;
+        t.order.price = t.order.price; // 原始價保留，顯示層以 modified_price 為準
+    } else {
+        const q = parseInt(body.quantity);
+        const remaining = t.status.order_quantity - (t.status.cancel_quantity || 0) - (t.status.deal_quantity || 0);
+        if (!(q > 0) || q > remaining) return mockResponse({ error: `[DEMO 模式] 減量數須為 1 ~ ${remaining}` }, 400);
+        t.status.cancel_quantity = (t.status.cancel_quantity || 0) + q;
+        if (t.status.order_quantity - t.status.cancel_quantity - (t.status.deal_quantity || 0) <= 0) {
+            // 全數減量 → 等同刪單
+            demoState.cancelledIds.add(t.order.id);
+            t.status.status = 'Cancelled';
+            demoState.pendingOrders = demoState.pendingOrders.filter(x => x.order.id !== t.order.id);
+        }
+    }
+    return mockResponse(t);
+}
+
 function demoPlaceOrder(bodyText) {
     let payload = {};
     try { payload = JSON.parse(bodyText || '{}'); } catch (e) { /* 忽略 */ }
@@ -3882,6 +4036,7 @@ function demoPlaceOrder(bodyText) {
     // 1~2 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環
     setTimeout(() => {
         if (!state.demoMode) return; // 期間若已關閉 Demo，放棄模擬成交
+        if (demoState.cancelledIds.has(orderId)) return; // v1.7.1 已刪單 → 放棄模擬成交
         if (action === 'Buy') {
             demoState.balance = Math.round(demoState.balance - price * shares);
             const pos = demoState.positions.find(p => p.code === code);
@@ -3941,7 +4096,10 @@ async function smartFetch(url, options = {}) {
             return mockResponse(demoTicks(code));
         }
 
-        if (url.includes('/order/trades')) return mockResponse(demoState.pendingOrders); // v1.7 假未成交委託        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
+        if (url.includes('/order/trades')) return mockResponse(demoState.pendingOrders); // v1.7 假未成交委託
+        if (url.includes('/order/cancel_order')) return demoCancelOrder(body); // v1.7.1
+        if (url.includes('/order/update_price')) return demoUpdateOrder(body, 'price'); // v1.7.1
+        if (url.includes('/order/update_qty')) return demoUpdateOrder(body, 'qty'); // v1.7.1        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
         console.warn(`[DEMO] 未攔截的 proxy 端點（回傳空物件防洩漏）: ${method} ${url}`);
         return mockResponse({});
     }

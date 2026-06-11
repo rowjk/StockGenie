@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.7.0">
+    <link rel="stylesheet" href="style.css?v=1.7.1">
 </head>
 <body>
     <div class="app-container">
@@ -323,7 +323,7 @@
                         </div>
                         <table class="data-table" id="pending-orders-table">
                             <thead><tr>
-                                <th>時間</th><th>代號</th><th>買賣</th><th>價格</th><th>委託量</th><th>已成交</th><th>狀態</th>
+                                <th>時間</th><th>代號</th><th>買賣</th><th>價格</th><th>委託量</th><th>已成交</th><th>狀態</th><th>操作</th>
                             </tr></thead>
                             <tbody id="pending-orders-tbody"></tbody>
                         </table>
@@ -724,7 +724,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.7.0</span>
+                    <span>版本號: v1.7.1</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
@@ -900,6 +900,31 @@
             <div class="modal-footer">
                 <button class="btn-secondary" id="btn-settings-lock-cancel">取消</button>
                 <button class="btn-primary" id="btn-settings-lock-submit">確認進入</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ── v1.7.1 委託單管理 Modal (改價/減量/刪單) ── -->
+    <div class="modal-overlay" id="order-mgmt-modal-overlay">
+        <div class="modal" id="order-mgmt-modal">
+            <div class="modal-header"><span id="order-mgmt-title">委託單管理</span></div>
+            <div class="modal-content">
+                <div class="confirm-details-grid">
+                    <div class="confirm-item"><span class="confirm-label">單號</span><span class="confirm-value mono" id="mgmt-trade-id">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">代號</span><span class="confirm-value mono" id="mgmt-code">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">現況</span><span class="confirm-value mono mask-money" id="mgmt-current">--</span></div>
+                </div>
+                <div class="form-group" id="mgmt-input-group" style="margin-top: 14px;">
+                    <span class="form-label" id="mgmt-input-label">新價格</span>
+                    <input type="number" class="form-input mono" id="mgmt-input" step="0.01" min="0">
+                    <span class="metric-subtitle" id="mgmt-hint"></span>
+                </div>
+                <p class="val-down" id="mgmt-cancel-warning" style="display:none; margin-top: 12px;">將向交易所送出刪單要求，剩餘未成交數量將全部取消。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btn-mgmt-cancel">取消</button>
+                <button class="btn-primary" id="btn-mgmt-submit">確認送出</button>
             </div>
         </div>
     </div>

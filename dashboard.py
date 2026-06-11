@@ -593,7 +593,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         target_url = f"http://127.0.0.1:8080/{rel_path}"
         
         # Intercept order placement to enforce read-only protection
-        if method == "POST" and rel_path == "api/v1/order/place_order":
+        # v1.7.1：改價/減量同樣受權限管制；刪單(cancel_order)刻意豁免——屬風險降低操作，
+        # 即使 TRADING_ENABLED=false 也應允許撤回既有委託（上游 daemon 仍有憑證層把關）
+        ORDER_MUTATION_PATHS = ("api/v1/order/place_order", "api/v1/order/update_price", "api/v1/order/update_qty")
+        if method == "POST" and rel_path in ORDER_MUTATION_PATHS:
             try:
                 env = load_env()
                 read_only_keys = {"HBUcuTmf3ZHa96vcVbhfCYUmtwQtofTHq9HJ2YRh64T"}
