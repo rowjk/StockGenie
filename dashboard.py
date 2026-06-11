@@ -18,6 +18,13 @@ import threading
 WORKSPACE_DIR = Path(__file__).parent.resolve()
 WEB_DIR = WORKSPACE_DIR / "web"
 HISTORY_FILE = WORKSPACE_DIR / "asset_history.json"
+CREDENTIALS_FILE = WORKSPACE_DIR / "credentials.json"
+ENV_FILE = WORKSPACE_DIR / ".env"
+VERIFICATION_CODE = "PEA6"  # 變更設定的二次安全驗證碼（防肉眼窺視，非防本機抓包）
+
+# Shioaji 守護進程全域引用（由 start_shioaji_server 管理；lock 防併發重啟）
+shioaji_proc = None
+shioaji_proc_lock = threading.Lock()
 
 # ── TWSE OpenAPI 來源與快取 ──────────────────────────────────────────────
 TWSE_ANNOUNCEMENT_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
@@ -261,6 +268,176 @@ def resolve_shioaji_bin():
 
     raise FileNotFoundError("找不到 shioaji.exe 執行檔。請確認 shioaji 已正確安裝。")
 
+# ── 多組 API 金鑰設定檔管理 (credentials.json) ────────────────────────────
+MASK_TOKENS = ("...", "●", "*")
+
+def is_masked_value(val):
+    """判斷字串是否為遮蔽格式（代表前端未變更該欄位）。"""
+    return any(t in val for t in MASK_TOKENS)
+
+def mask_api_key(val):
+    """API Key 遮蔽：保留前 6 與後 4 字元；過短時回固定長度遮蔽。"""
+    if not val:
+        return ""
+    if is_masked_value(val):
+        return val
+    if len(val) <= 10:
+        return "●" * 8
+    return f"{val[:6]}...{val[-4:]}"
+
+def mask_fixed(val):
+    """Secret Key / 密碼遮蔽：固定長度，不洩漏原始字串長度。"""
+    return "●" * 8 if val else ""
+
+def _atomic_write_text(path, text):
+    """temp file + os.replace 原子寫入，防寫到一半損毀。"""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+def save_credentials(db):
+    _atomic_write_text(CREDENTIALS_FILE, json.dumps(db, indent=2, ensure_ascii=False))
+
+def load_credentials():
+    """讀取 credentials.json；不存在或損毀時自 .env 初始化第一組設定檔（無縫升級）。"""
+    if CREDENTIALS_FILE.exists():
+        try:
+            with open(CREDENTIALS_FILE, encoding="utf-8") as f:
+                db = json.load(f)
+            profiles = db.get("profiles")
+            if isinstance(profiles, list) and profiles:
+                idx = db.get("active_index", 0)
+                if not isinstance(idx, int) or not (0 <= idx < len(profiles)):
+                    db["active_index"] = 0
+                return db
+            print("⚠ credentials.json 結構異常，將自 .env 重新初始化")
+        except Exception as e:
+            print(f"⚠ credentials.json 讀取失敗（{e}），將自 .env 重新初始化")
+    try:
+        env = load_env()
+    except Exception:
+        env = {}
+    db = {
+        "active_index": 0,
+        "profiles": [{
+            "name": "預設帳戶",
+            "api_key": env.get("API_KEY", ""),
+            "secret_key": env.get("SECRET_KEY", ""),
+            "ca_cert_path": env.get("CA_CERT_PATH", ""),
+            "ca_password": env.get("CA_PASSWORD", ""),
+        }],
+    }
+    save_credentials(db)
+    return db
+
+def save_env(env_vars):
+    """合併更新 .env：僅覆寫傳入的金鑰欄位，保留其他既有設定與註解。"""
+    lines = []
+    if ENV_FILE.exists():
+        with open(ENV_FILE, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    remaining = dict(env_vars)
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.partition("=")[0].strip()
+            if key in remaining:
+                out.append(f"{key}={remaining.pop(key)}")
+                continue
+        out.append(line)
+    for key, val in remaining.items():
+        out.append(f"{key}={val}")
+    _atomic_write_text(ENV_FILE, "\n".join(out) + "\n")
+
+def profile_env(profile):
+    """設定檔 → .env 風格的金鑰字典。"""
+    return {
+        "API_KEY": profile.get("api_key", ""),
+        "SECRET_KEY": profile.get("secret_key", ""),
+        "CA_CERT_PATH": profile.get("ca_cert_path", ""),
+        "CA_PASSWORD": profile.get("ca_password", ""),
+    }
+
+def _wait_port_released(host="127.0.0.1", port=8080, timeout=5.0):
+    """等待 port 釋放（最多 timeout 秒），避免新進程因 Port 8080 占用啟動失敗。"""
+    import socket
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            if s.connect_ex((host, port)) != 0:
+                return True
+        time.sleep(0.3)
+    return False
+
+def start_shioaji_server(env_dict):
+    """終止既有 Shioaji 守護進程並以新環境變數重啟。
+
+    啟動失敗不致命（回傳 False）：確保金鑰錯誤或執行檔缺失時，
+    設定 API 與網頁伺服器仍可運作，使用者可修正設定（防鎖死）。
+    """
+    global shioaji_proc
+    try:
+        shioaji_bin = resolve_shioaji_bin()
+    except Exception as e:
+        print(f"\033[93m⚠ 無法啟動 Shioaji 伺服器：{e}\n"
+              f"  設定頁面仍可使用，修正後請重新切換設定檔。\033[0m")
+        return False
+
+    run_env = os.environ.copy()
+    run_env["SJ_API_KEY"] = env_dict.get("API_KEY", "")
+    run_env["SJ_SEC_KEY"] = env_dict.get("SECRET_KEY", "")
+    ca_cert = env_dict.get("CA_CERT_PATH", "")
+    if ca_cert:
+        ca_path = Path(ca_cert)
+        if not ca_path.is_absolute():
+            ca_path = WORKSPACE_DIR / ca_path
+        if not ca_path.exists():
+            # 黃色警告：憑證遺失只影響下單，不中斷伺服器啟動
+            print(f"\033[93m⚠ 警告：找不到 CA 憑證檔案：{ca_path.resolve()}\n"
+                  f"  行情查詢不受影響，但「下單」將因簽章失敗而無法使用。\033[0m")
+        run_env["SJ_CA_PATH"] = str(ca_path.resolve())
+    else:
+        print("\033[93m⚠ 警告：未設定 CA_CERT_PATH，下單功能將無法使用（僅供行情查詢）。\033[0m")
+    run_env["SJ_CA_PASSWD"] = env_dict.get("CA_PASSWORD", "")
+    run_env["SJ_PRODUCTION"] = "true"
+
+    with shioaji_proc_lock:
+        if shioaji_proc is not None:
+            print("正在中止舊的 Shioaji API 伺服器...")
+            try:
+                shioaji_proc.terminate()
+                try:
+                    shioaji_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    shioaji_proc.kill()
+                    shioaji_proc.wait(timeout=3)
+            except Exception as e:
+                print(f"⚠ 終止舊進程時發生異常：{e}")
+            shioaji_proc = None
+            if not _wait_port_released():
+                print("\033[93m⚠ Port 8080 在等待時間內未釋放，仍嘗試啟動新進程...\033[0m")
+        try:
+            print(f"正在啟動 Shioaji API 伺服器，執行檔路徑：{shioaji_bin}")
+            shioaji_proc = subprocess.Popen(
+                [shioaji_bin, "server", "start", "--no-open"],
+                env=run_env
+            )
+            return True
+        except Exception as e:
+            print(f"\033[91m✖ Shioaji 伺服器啟動失敗：{e}\033[0m")
+            shioaji_proc = None
+            return False
+
+def apply_active_profile(db):
+    """將啟用中設定寫入 .env（供 monitor.py 等腳本同步）並於背景重啟 Shioaji。"""
+    profile = db["profiles"][db["active_index"]]
+    env_dict = profile_env(profile)
+    save_env(env_dict)
+    threading.Thread(target=start_shioaji_server, args=(env_dict,), daemon=True).start()
+
 # ── Custom HTTP Request Handler ──────────────────────────────────────────
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -299,6 +476,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_get_history()
         elif self.path == '/api/trade-permission':
             self.handle_get_trade_permission()
+        elif self.path == '/api/credentials':
+            self.handle_get_credentials()
         elif self.path.startswith('/api/twse-announcements'):
             self.handle_twse_announcements()
         elif self.path.startswith('/api/twse-dividends'):
@@ -315,6 +494,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_import_history()
         elif self.path == '/api/asset-history':
             self.handle_post_history()
+        elif self.path == '/api/credentials/save':
+            self.handle_save_credentials()
+        elif self.path == '/api/credentials/switch':
+            self.handle_switch_credentials()
+        elif self.path == '/api/credentials/delete':
+            self.handle_delete_credentials()
         else:
             self.send_error(404, "Not Found")
 
@@ -434,6 +619,142 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             }).encode('utf-8'))
         except Exception as e:
             self.send_json_error(500, str(e))
+
+    # ── 多組 API 金鑰設定檔端點（不依賴 Shioaji 進程，防鎖死）──────────────
+    def _read_json_body(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            return {}
+        raw = self.rfile.read(content_length)
+        data = json.loads(raw.decode('utf-8'))
+        return data if isinstance(data, dict) else {}
+
+    def _check_verification(self, body):
+        """二次安全驗證碼校驗；失敗時直接回 403 並回傳 False。"""
+        if body.get("verification_code") != VERIFICATION_CODE:
+            self.send_json_error(403, "安全驗證失敗")
+            return False
+        return True
+
+    def handle_get_credentials(self):
+        try:
+            db = load_credentials()
+            masked = [{
+                "name": p.get("name", ""),
+                "api_key": mask_api_key(p.get("api_key", "")),
+                "secret_key": mask_fixed(p.get("secret_key", "")),
+                "ca_cert_path": p.get("ca_cert_path", ""),
+                "ca_password": mask_fixed(p.get("ca_password", "")),
+            } for p in db["profiles"]]
+            self._send_json({"active_index": db["active_index"], "profiles": masked})
+        except Exception as e:
+            self.send_json_error(500, f"讀取設定檔失敗: {e}")
+
+    def handle_save_credentials(self):
+        try:
+            body = self._read_json_body()
+        except Exception as e:
+            self.send_json_error(400, f"請求格式錯誤: {e}")
+            return
+        if not self._check_verification(body):
+            return
+        try:
+            index = body.get("index", -1)
+            name = str(body.get("name", "")).strip()
+            api_key = str(body.get("api_key", "")).strip()
+            secret_key = str(body.get("secret_key", "")).strip()
+            ca_path = str(body.get("ca_cert_path", "")).strip()
+            ca_pass = str(body.get("ca_password", "")).strip()
+            if not name:
+                self.send_json_error(400, "名稱不可為空")
+                return
+            db = load_credentials()
+            profiles = db["profiles"]
+            if isinstance(index, int) and 0 <= index < len(profiles):
+                # 修改既有設定檔；遮蔽格式或空值代表未變更，保留原值
+                profile = profiles[index]
+                profile["name"] = name
+                profile["ca_cert_path"] = ca_path
+                if api_key and not is_masked_value(api_key):
+                    profile["api_key"] = api_key
+                if secret_key and not is_masked_value(secret_key):
+                    profile["secret_key"] = secret_key
+                if ca_pass and not is_masked_value(ca_pass):
+                    profile["ca_password"] = ca_pass
+            else:
+                # 新增設定檔：金鑰必填且不可為遮蔽格式
+                if not api_key or is_masked_value(api_key):
+                    self.send_json_error(400, "無效的 API Key")
+                    return
+                if not secret_key or is_masked_value(secret_key):
+                    self.send_json_error(400, "無效的 Secret Key")
+                    return
+                profiles.append({
+                    "name": name,
+                    "api_key": api_key,
+                    "secret_key": secret_key,
+                    "ca_cert_path": ca_path,
+                    "ca_password": "" if is_masked_value(ca_pass) else ca_pass,
+                })
+                index = len(profiles) - 1
+            save_credentials(db)
+            restarting = (index == db["active_index"])
+            if restarting:
+                # 更新的是啟用中設定 → 熱套用（寫 .env + 背景重啟）
+                apply_active_profile(db)
+            self._send_json({"ok": True, "index": index, "restarting": restarting})
+        except Exception as e:
+            self.send_json_error(500, f"儲存設定檔失敗: {e}")
+
+    def handle_switch_credentials(self):
+        try:
+            body = self._read_json_body()
+        except Exception as e:
+            self.send_json_error(400, f"請求格式錯誤: {e}")
+            return
+        if not self._check_verification(body):
+            return
+        try:
+            index = body.get("index")
+            db = load_credentials()
+            if not isinstance(index, int) or not (0 <= index < len(db["profiles"])):
+                self.send_json_error(400, "無效的設定檔索引")
+                return
+            db["active_index"] = index
+            save_credentials(db)
+            apply_active_profile(db)
+            self._send_json({"ok": True, "active_index": index, "restarting": True})
+        except Exception as e:
+            self.send_json_error(500, f"切換設定檔失敗: {e}")
+
+    def handle_delete_credentials(self):
+        try:
+            body = self._read_json_body()
+        except Exception as e:
+            self.send_json_error(400, f"請求格式錯誤: {e}")
+            return
+        if not self._check_verification(body):
+            return
+        try:
+            index = body.get("index")
+            db = load_credentials()
+            profiles = db["profiles"]
+            if not isinstance(index, int) or not (0 <= index < len(profiles)):
+                self.send_json_error(400, "無效的設定檔索引")
+                return
+            if len(profiles) <= 1:
+                self.send_json_error(400, "不可刪除最後一組設定檔")
+                return
+            if index == db["active_index"]:
+                self.send_json_error(400, "不可刪除啟用中的設定檔，請先切換至其他設定檔")
+                return
+            profiles.pop(index)
+            if index < db["active_index"]:
+                db["active_index"] -= 1
+            save_credentials(db)
+            self._send_json({"ok": True, "active_index": db["active_index"]})
+        except Exception as e:
+            self.send_json_error(500, f"刪除設定檔失敗: {e}")
 
     def _query_codes(self):
         """從 query string 解析 ?codes=2330,2317 參數。"""
@@ -679,62 +1000,30 @@ def run_web_server(server_port=8081):
         httpd.server_close()
 
 def main():
-    env = load_env()
-    
-    # Map environment variables for Shioaji Server
-    run_env = os.environ.copy()
-    run_env["SJ_API_KEY"] = env.get("API_KEY", "")
-    run_env["SJ_SEC_KEY"] = env.get("SECRET_KEY", "")
-    
-    ca_cert = env.get("CA_CERT_PATH", "")
-    if ca_cert:
-        ca_path = Path(ca_cert)
-        if not ca_path.is_absolute():
-            ca_path = WORKSPACE_DIR / ca_path
-        if not ca_path.exists():
-            # 黃色警告：憑證遺失只影響下單，不中斷伺服器啟動
-            print(f"\033[93m⚠ 警告：找不到 CA 憑證檔案：{ca_path.resolve()}\n"
-                  f"  行情查詢不受影響，但「下單」將因簽章失敗而無法使用。\n"
-                  f"  請確認 .env 中 CA_CERT_PATH 設定是否正確。\033[0m")
-        run_env["SJ_CA_PATH"] = str(ca_path.resolve())
-    else:
-        print("\033[93m⚠ 警告：.env 未設定 CA_CERT_PATH，下單功能將無法使用（僅供行情查詢）。\033[0m")
-    
-    run_env["SJ_CA_PASSWD"] = env.get("CA_PASSWORD", "")
-    run_env["SJ_PRODUCTION"] = "true"  # Run in production mode by default
+    # 多組設定檔：不存在時自 .env 無縫升級建立第一組
+    db = load_credentials()
+    profile = db["profiles"][db["active_index"]]
+    print(f"使用設定檔：[{db['active_index']}] {profile.get('name', '')}")
 
-    # Start Shioaji API server
-    try:
-        shioaji_bin = resolve_shioaji_bin()
-    except Exception as e:
-        print(f"錯誤：{e}")
-        input("請按 Enter 鍵關閉視窗...")
-        return
-        
-    print(f"正在啟動 Shioaji API 伺服器，執行檔路徑：{shioaji_bin}")
-    
-    # Start the daemon / server
-    api_proc = subprocess.Popen(
-        [shioaji_bin, "server", "start", "--no-open"],
-        env=run_env
-    )
-    
-    # Start web server thread
+    # 先啟動網頁伺服器：即使 Shioaji 啟動失敗，設定頁面仍可修正金鑰（防鎖死）
     web_thread = threading.Thread(target=run_web_server, args=(8081,), daemon=True)
     web_thread.start()
-    
-    # Wait for Shioaji server initialization
-    print("正在等待 Shioaji API 伺服器初始化...")
-    import urllib.request as _ur
-    for _ in range(30):
-        try:
-            _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
-            print("✅ Shioaji API 伺服器已就緒")
-            break
-        except Exception:
-            time.sleep(1)
-    else:
-        print("⚠ 等待 Shioaji API 伺服器逾時，繼續嘗試開啟瀏覽器...")
+
+    started = start_shioaji_server(profile_env(profile))
+
+    if started:
+        # Wait for Shioaji server initialization
+        print("正在等待 Shioaji API 伺服器初始化...")
+        import urllib.request as _ur
+        for _ in range(30):
+            try:
+                _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
+                print("✅ Shioaji API 伺服器已就緒")
+                break
+            except Exception:
+                time.sleep(1)
+        else:
+            print("⚠ 等待 Shioaji API 伺服器逾時，繼續嘗試開啟瀏覽器...")
     
     # Auto-open browser
     print("正在自動開啟瀏覽器至 http://127.0.0.1:8081...")
@@ -754,11 +1043,13 @@ def main():
         print("\n正在停止服務...")
     finally:
         # Cleanly stop Shioaji API server
-        api_proc.terminate()
-        try:
-            api_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            api_proc.kill()
+        with shioaji_proc_lock:
+            if shioaji_proc is not None:
+                shioaji_proc.terminate()
+                try:
+                    shioaji_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    shioaji_proc.kill()
         print("所有程序已安全停止。謝謝使用！")
 
 if __name__ == "__main__":

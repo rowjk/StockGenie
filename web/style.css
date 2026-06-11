@@ -1449,3 +1449,69 @@ body.boss-mode .mask-block::after {
     cursor: not-allowed;
     pointer-events: auto; /* 保留 hover 以顯示 tooltip 說明原因 */
 }
+
+/* ── v1.6.0 API 憑證管理與重啟遮罩 ─────────────────────────────────────── */
+.btn-table-action {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    margin-right: 6px;
+}
+
+.server-restart-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.78);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+}
+
+.server-restart-overlay.active {
+    display: flex;
+}
+
+.restart-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+    padding: 32px 40px;
+    max-width: 440px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.restart-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--color-accent);
+    border-radius: 50%;
+    animation: restart-spin 0.9s linear infinite;
+}
+
+@keyframes restart-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── v1.6.0 Demo 演示模式徽章 ─────────────────────────────────────────── */
+.demo-badge {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #3b82f6;
+    border: 1px solid #3b82f6;
+    border-radius: 4px;
+    padding: 2px 8px;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.55);
+    animation: demo-pulse 2s ease-in-out infinite;
+}
+
+@keyframes demo-pulse {
+    50% { box-shadow: 0 0 14px rgba(59, 130, 246, 0.9); }
+}

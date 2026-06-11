@@ -113,6 +113,7 @@ let state = {
     totalAssets: 0,
     profitLoss: [],          // 已實現損益原始紀錄
     twseFeedTimer: null,     // TWSE 公告/除權息定時更新
+    demoMode: localStorage.getItem('demoMode') === 'true', // Demo 演示模式（前端攔截假數據）
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────
@@ -120,7 +121,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 逐一初始化，任一失敗不中斷後續（防止快取版 HTML 缺少元素時全崩）
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
                       initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
-                      initPrivacyControls, initCardConfig, initUsMarket]) {
+                      initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt,
+                      initDemoMode]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
 
@@ -279,6 +281,7 @@ function switchView(targetView) {
         renderAssetChart();
     } else if (targetView === 'settings') {
         renderHistoryTable();
+        loadCredentials();
     }
 
     // 美股行情輪詢僅在「美股指數」分頁時啟用，離開即停止以節省流量
@@ -361,7 +364,7 @@ async function checkServerStatus() {
     const text = document.getElementById('server-status-text');
     
     try {
-        const response = await fetch(`${API_BASE}/auth/usage`);
+        const response = await smartFetch(`${API_BASE}/auth/usage`);
         if (response.ok) {
             dot.classList.add('online');
             text.textContent = '伺服器已連線';
@@ -408,7 +411,7 @@ async function loadSession() {
     try {
         // 檢查交易權限
         try {
-            const permResp = await fetch(`${LOCAL_API_BASE}/trade-permission`);
+            const permResp = await smartFetch(`${LOCAL_API_BASE}/trade-permission`);
             if (permResp.ok) {
                 const permData = await permResp.json();
                 state.tradingPermitted = permData.trading_permitted;
@@ -417,7 +420,7 @@ async function loadSession() {
             console.error("無法獲取交易權限資訊", e);
         }
 
-        const response = await fetch(`${API_BASE}/auth/accounts`);
+        const response = await smartFetch(`${API_BASE}/auth/accounts`);
         if (!response.ok) return;
         
         state.accounts = await response.json();
@@ -490,6 +493,7 @@ async function loadSession() {
 // ── SSE 即時成交與委託回報接收 ──────────────────────────────────────────
 function startSSE() {
     closeSSE();
+    if (state.demoMode) return; // Demo 模式不建立實體 SSE 連線
     
     // 連線至永豐即時回報 SSE 端點 (直連 8080 避免 proxy 阻塞)
     state.sseConnection = new EventSource(`http://127.0.0.1:8080/api/v1/stream/data/order_event`);
@@ -602,7 +606,7 @@ async function fetchData() {
 // ── 慢速帳務 API（由 fetchData 並行調度）──────────────────────────────────
 async function fetchBalance(stockAcc) {
     try {
-        const resp = await fetch(`${API_BASE}/portfolio/account_balance`, {
+        const resp = await smartFetch(`${API_BASE}/portfolio/account_balance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -624,7 +628,7 @@ async function fetchBalance(stockAcc) {
 // 取得交易額度（盤後 API 永遠 500，由呼叫端跳過）
 async function fetchTradingLimits(stockAcc) {
     try {
-            const resp = await fetch(`${API_BASE}/portfolio/trading_limits`, {
+            const resp = await smartFetch(`${API_BASE}/portfolio/trading_limits`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -679,7 +683,7 @@ async function fetchStockPositions(stockAcc) {
                 person_id: stockAcc.person_id,
             };
 
-            const tryFetch = (extraBody) => fetch(`${API_BASE}/portfolio/position_unit`, {
+            const tryFetch = (extraBody) => smartFetch(`${API_BASE}/portfolio/position_unit`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...basePayload, ...extraBody })
@@ -715,7 +719,7 @@ async function fetchStockPositions(stockAcc) {
 // 取得近三日交割款（渲染交由 fetchData 在全部完成後統一執行）
 async function fetchSettlements(stockAcc) {
     try {
-            const resp = await fetch(`${API_BASE}/portfolio/settlements`, {
+            const resp = await smartFetch(`${API_BASE}/portfolio/settlements`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -848,7 +852,7 @@ async function initWatchlist() {
     if (nameless.length > 0) {
         await Promise.all(nameless.map(async item => {
             try {
-                const resp = await fetch(`${API_BASE}/data/contracts/${item.code}?security_type=STK`);
+                const resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=STK`);
                 if (resp.ok) {
                     const contract = await resp.json();
                     item.name = contract.name || item.code;
@@ -883,9 +887,9 @@ function initWatchlistControls() {
         try {
             // 查詢合約資訊，優先用 STK (股票) 查，若查無則用 IND (指數) 查
             let secType = 'STK';
-            let resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
+            let resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
             if (!resp.ok) {
-                resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=IND`);
+                resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=IND`);
                 if (resp.ok) secType = 'IND';
             }
             if (resp.ok) {
@@ -971,7 +975,7 @@ async function updateWatchlistSnapshots() {
         const CHUNK_SIZE = 10;
         const snapshots = [];
         for (let i = 0; i < contracts.length; i += CHUNK_SIZE) {
-            const resp = await fetch(`${API_BASE}/data/snapshots`, {
+            const resp = await smartFetch(`${API_BASE}/data/snapshots`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contracts: contracts.slice(i, i + CHUNK_SIZE) })
@@ -1190,7 +1194,7 @@ async function selectWatchlistItem(code) {
     // 若 reference（昨日參考價）尚未快取，從 contracts API 補抓（非阻塞）
     const item = state.watchlist.find(w => w.code === code);
     if (item && !item.reference) {
-        fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`)
+        smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`)
             .then(r => r.ok ? r.json() : null)
             .then(c => {
                 if (c && c.reference) {
@@ -1282,7 +1286,7 @@ async function fetchKbarsWithCache(code) {
     startDate.setFullYear(startDate.getFullYear() - 2);
     const start = startDate.toISOString().split('T')[0];
     const secType = item ? (item.security_type || 'STK') : 'STK';
-    const resp = await fetch(`${API_BASE}/data/kbars`, {
+    const resp = await smartFetch(`${API_BASE}/data/kbars`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contract: { security_type: secType, exchange, code }, start, end, frequency: '1D' })
@@ -1341,7 +1345,7 @@ async function renderDetailTickChart(code) {
         const item = state.watchlist.find(w => w.code === code);
         const secType = item ? (item.security_type || 'STK') : 'STK';
         const exchange = item ? (item.exchange || 'TSE') : 'TSE';
-        const resp = await fetch(`${API_BASE}/data/ticks`, {
+        const resp = await smartFetch(`${API_BASE}/data/ticks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1620,7 +1624,7 @@ async function initDrawerControls() {
         
         try {
             console.log("正在發送委託要求", payload);
-            const resp = await fetch(`${API_BASE}/order/place_order`, {
+            const resp = await smartFetch(`${API_BASE}/order/place_order`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -1695,7 +1699,7 @@ function showToastNotification(msg) {
 // ── 財產總額歷史追蹤 ──────────────────────────────────────────────────────
 async function loadAssetHistory() {
     try {
-        const resp = await fetch(`${LOCAL_API_BASE}/asset-history`);
+        const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history`);
         if (resp.ok) {
             state.assetHistory = await resp.json();
             renderAssetChart();
@@ -1732,11 +1736,14 @@ async function saveDailyAssetTotal() {
     document.getElementById('stock-market-value').textContent = formatCurrency(totalStockMarketVal);
     document.getElementById('total-assets').textContent = formatCurrency(totalAssets);
 
+    // Demo 模式僅更新畫面數值，不寫入真實資產歷史檔
+    if (state.demoMode) return;
+
     // 每天只寫入 JSON 一次，避免每 15 秒重複覆寫
     if (localStorage.getItem('lastSavedDate') === today) return;
     
     try {
-        const resp = await fetch(`${LOCAL_API_BASE}/asset-history`, {
+        const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ date: today, value: totalAssets })
@@ -1863,7 +1870,7 @@ function initHistoryControls() {
         }
         
         try {
-            const resp = await fetch(`${LOCAL_API_BASE}/asset-history`, {
+            const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ date: dateInput, value: parseFloat(valInput) })
@@ -1885,7 +1892,7 @@ function initHistoryControls() {
     const exportBtn = document.getElementById('btn-export-history');
     if (exportBtn) exportBtn.onclick = async () => {
         try {
-            const resp = await fetch(`${LOCAL_API_BASE}/asset-history`);
+            const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history`);
             if (!resp.ok) { alert('讀取歷史資料失敗，無法匯出。'); return; }
             const data = await resp.json();
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1910,7 +1917,7 @@ function initHistoryControls() {
             if (!file) return;
             try {
                 const text = await file.text();
-                const resp = await fetch(`${LOCAL_API_BASE}/asset-history/import`, {
+                const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history/import`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: text
@@ -1956,7 +1963,7 @@ function renderHistoryTable() {
             if (!confirm(`確定要刪除 ${item.date} 的歷史資產紀錄嗎？`)) return;
             
             try {
-                const resp = await fetch(`${LOCAL_API_BASE}/asset-history/${item.date}`, {
+                const resp = await smartFetch(`${LOCAL_API_BASE}/asset-history/${item.date}`, {
                     method: 'DELETE'
                 });
                 if (resp.ok) {
@@ -2070,7 +2077,7 @@ function initQuickOrder() {
 
         // 3. 打 contracts API
         try {
-            const resp = await fetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
+            const resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
             if (resp.ok) {
                 const contract = await resp.json();
                 openOrderDrawer(contract.code, 'STK', contract.reference || 0, contract.exchange || 'TSE');
@@ -2103,7 +2110,7 @@ async function enrichPositionNames() {
         }
         // 再打 contracts API
         try {
-            const resp = await fetch(`${API_BASE}/data/contracts/${pos.code}?security_type=STK`);
+            const resp = await smartFetch(`${API_BASE}/data/contracts/${pos.code}?security_type=STK`);
             if (resp.ok) {
                 const contract = await resp.json();
                 pos.name = contract.name || pos.code;
@@ -2121,7 +2128,7 @@ async function loadProfitLoss() {
     const stockAcc = state.accounts.find(a => a.account_type === 'S');
     if (!stockAcc) return;
     try {
-        const resp = await fetch(`${API_BASE}/portfolio/profit_loss`, {
+        const resp = await smartFetch(`${API_BASE}/portfolio/profit_loss`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2227,7 +2234,7 @@ async function loadTwseFeeds() {
 
     // 1. 重大訊息日誌
     try {
-        const resp = await fetch(`${LOCAL_API_BASE}/twse-announcements?codes=${encodeURIComponent(codes)}`);
+        const resp = await smartFetch(`${LOCAL_API_BASE}/twse-announcements?codes=${encodeURIComponent(codes)}`);
         if (resp.ok) renderAnnouncements(await resp.json());
     } catch (e) {
         console.warn("載入 TWSE 重大訊息失敗", e);
@@ -2235,7 +2242,7 @@ async function loadTwseFeeds() {
 
     // 2. 除權息行事曆
     try {
-        const resp = await fetch(`${LOCAL_API_BASE}/twse-dividends?codes=${encodeURIComponent(codes)}`);
+        const resp = await smartFetch(`${LOCAL_API_BASE}/twse-dividends?codes=${encodeURIComponent(codes)}`);
         if (resp.ok) renderDividends(await resp.json());
     } catch (e) {
         console.warn("載入 TWSE 除權息失敗", e);
@@ -2624,7 +2631,7 @@ function stopUsMarket() {
 
 async function fetchUsChart(symbol, range, interval) {
     const url = `${LOCAL_API_BASE}/us-chart?symbol=${encodeURIComponent(symbol)}&range=${range}&interval=${interval}`;
-    const resp = await fetch(url);
+    const resp = await smartFetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     return resp.json();
 }
@@ -3054,4 +3061,681 @@ async function renderUsMAChart(symbol) {
         console.error('[美股] 獲取均線資料失敗', e);
         legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">載入失敗</span>';
     }
+}
+
+// ── API 憑證多組管理 (v1.6.0) ──────────────────────────────────────────────
+let credentialsCache = { active_index: 0, profiles: [] };
+let credEditIndex = -1; // -1 = 新增模式
+let restartPollTimer = null;
+
+function initCredentialsMgmt() {
+    document.getElementById('btn-add-credential').addEventListener('click', () => openCredentialForm(-1));
+    document.getElementById('btn-cred-cancel').addEventListener('click', hideCredentialForm);
+    document.getElementById('btn-cred-save').addEventListener('click', () => {
+        const name = document.getElementById('cred-name').value.trim();
+        if (!name) {
+            showToastNotification('設定名稱不可為空。');
+            return;
+        }
+        openCredentialsLockModal(saveCredentialForm);
+    });
+    document.getElementById('btn-restart-force-unlock').addEventListener('click', hideRestartOverlay);
+}
+
+async function loadCredentials() {
+    const statusEl = document.getElementById('credentials-status');
+    try {
+        const resp = await fetch(`${LOCAL_API_BASE}/credentials`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        credentialsCache = await resp.json();
+        renderCredentialsTable();
+        if (statusEl) statusEl.textContent = `共 ${credentialsCache.profiles.length} 組設定`;
+    } catch (e) {
+        console.error('[憑證] 讀取設定檔清單失敗', e);
+        if (statusEl) statusEl.textContent = '讀取失敗';
+    }
+}
+
+function renderCredentialsTable() {
+    const tbody = document.querySelector('#credentials-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    credentialsCache.profiles.forEach((p, i) => {
+        const isActive = i === credentialsCache.active_index;
+        const caName = p.ca_cert_path ? p.ca_cert_path.split(/[\\/]/).pop() : '--';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${isActive ? '<span style="color: var(--color-accent); font-weight: 600;">● 使用中</span>' : ''}</td>
+            <td>${escapeHtml(p.name || '')}</td>
+            <td class="mono">${escapeHtml(p.api_key || '--')}</td>
+            <td class="mono" title="${escapeHtml(p.ca_cert_path || '')}">${escapeHtml(caName)}</td>
+            <td class="cred-actions"></td>
+        `;
+        const actionTd = tr.querySelector('.cred-actions');
+        if (!isActive) {
+            const btnSwitch = document.createElement('button');
+            btnSwitch.className = 'btn-secondary btn-table-action';
+            btnSwitch.textContent = '切換使用';
+            btnSwitch.onclick = () => openCredentialsLockModal(() => doSwitchCredential(i));
+            actionTd.appendChild(btnSwitch);
+        }
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn-secondary btn-table-action';
+        btnEdit.textContent = '編輯';
+        btnEdit.onclick = () => openCredentialForm(i);
+        actionTd.appendChild(btnEdit);
+        const btnDel = document.createElement('button');
+        btnDel.className = 'btn-secondary btn-table-action';
+        btnDel.textContent = '刪除';
+        btnDel.onclick = () => {
+            // 前端先擋（後端亦有同樣校驗）
+            if (credentialsCache.profiles.length <= 1) {
+                showToastNotification('不可刪除最後一組設定檔。');
+                return;
+            }
+            if (i === credentialsCache.active_index) {
+                showToastNotification('不可刪除啟用中的設定檔，請先切換至其他設定檔。');
+                return;
+            }
+            openCredentialsLockModal(() => doDeleteCredential(i));
+        };
+        actionTd.appendChild(btnDel);
+        tbody.appendChild(tr);
+    });
+}
+
+function openCredentialForm(index) {
+    credEditIndex = index;
+    const p = index >= 0 ? credentialsCache.profiles[index] : null;
+    document.getElementById('credential-form-title').textContent = p ? `編輯設定檔：${p.name}` : '新增設定檔';
+    document.getElementById('cred-name').value = p ? (p.name || '') : '';
+    // 編輯時帶入遮蔽值：維持遮蔽（或留空）代表不變更，後端會保留原值
+    document.getElementById('cred-api-key').value = p ? (p.api_key || '') : '';
+    document.getElementById('cred-secret-key').value = p ? (p.secret_key || '') : '';
+    document.getElementById('cred-ca-path').value = p ? (p.ca_cert_path || '') : '';
+    document.getElementById('cred-ca-password').value = p ? (p.ca_password || '') : '';
+    document.getElementById('credential-form-wrap').style.display = 'block';
+}
+
+function hideCredentialForm() {
+    credEditIndex = -1;
+    document.getElementById('credential-form-wrap').style.display = 'none';
+}
+
+async function postCredentials(path, payload, failPrefix) {
+    const resp = await fetch(`${LOCAL_API_BASE}/credentials/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, verification_code: 'PEA6' }),
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (e) { /* 非 JSON 回應 */ }
+    if (!resp.ok) throw new Error(data.error || `${failPrefix}（HTTP ${resp.status}）`);
+    return data;
+}
+
+async function saveCredentialForm() {
+    const payload = {
+        index: credEditIndex,
+        name: document.getElementById('cred-name').value.trim(),
+        api_key: document.getElementById('cred-api-key').value.trim(),
+        secret_key: document.getElementById('cred-secret-key').value.trim(),
+        ca_cert_path: document.getElementById('cred-ca-path').value.trim(),
+        ca_password: document.getElementById('cred-ca-password').value.trim(),
+    };
+    try {
+        const data = await postCredentials('save', payload, '儲存失敗');
+        showToastNotification('設定檔已儲存。');
+        hideCredentialForm();
+        if (data.restarting) showRestartOverlay();
+        await loadCredentials();
+    } catch (e) {
+        showToastNotification(`儲存失敗：${e.message}`);
+    }
+}
+
+async function doSwitchCredential(index) {
+    const target = credentialsCache.profiles[index];
+    try {
+        await postCredentials('switch', { index }, '切換失敗');
+        showToastNotification(`已切換至「${target ? target.name : index}」，交易伺服器重啟中...`);
+        showRestartOverlay();
+        await loadCredentials();
+    } catch (e) {
+        showToastNotification(`切換失敗：${e.message}`);
+    }
+}
+
+async function doDeleteCredential(index) {
+    const target = credentialsCache.profiles[index];
+    try {
+        await postCredentials('delete', { index }, '刪除失敗');
+        showToastNotification(`設定檔「${target ? target.name : index}」已刪除。`);
+        await loadCredentials();
+    } catch (e) {
+        showToastNotification(`刪除失敗：${e.message}`);
+    }
+}
+
+// 變更設定安全驗證 Modal（與系統設定鎖共用題型：洗牌選項中選出 PEA6）
+function openCredentialsLockModal(onSuccess) {
+    const overlay = document.getElementById('credentials-lock-modal-overlay');
+    const select = document.getElementById('credentials-lock-select');
+    const errorEl = document.getElementById('credentials-lock-error');
+    const submitBtn = document.getElementById('btn-credentials-lock-submit');
+    const cancelBtn = document.getElementById('btn-credentials-lock-cancel');
+    if (!overlay || !select || !errorEl) return;
+
+    errorEl.style.display = 'none';
+    select.innerHTML = '<option value="">-- 請選擇正確答案 --</option>';
+
+    const correctAnswer = 'PEA6';
+    const options = [correctAnswer, ...generateIncorrectAnswers()];
+    for (let i = options.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [options[i], options[j]] = [options[j], options[i]];
+    }
+    options.forEach(opt => {
+        const op = document.createElement('option');
+        op.value = opt;
+        op.textContent = opt;
+        select.appendChild(op);
+    });
+
+    overlay.classList.add('active');
+
+    submitBtn.onclick = () => {
+        if (select.value === correctAnswer) {
+            overlay.classList.remove('active');
+            onSuccess();
+        } else {
+            errorEl.style.display = 'block';
+        }
+    };
+    cancelBtn.onclick = () => overlay.classList.remove('active');
+}
+
+// ── 重啟鎖定遮罩與就緒輪詢 ──────────────────────────────────────────────────
+function showRestartOverlay() {
+    const overlay = document.getElementById('server-restart-overlay');
+    const titleEl = document.getElementById('restart-title');
+    const msgEl = document.getElementById('restart-msg');
+    const forceBtn = document.getElementById('btn-restart-force-unlock');
+    if (!overlay) return;
+
+    titleEl.textContent = '交易伺服器重啟中...';
+    msgEl.textContent = '正在以新的 API 憑證重新啟動 Shioaji 伺服器，請稍候（最長 30 秒）。';
+    forceBtn.style.display = 'none';
+    overlay.classList.add('active');
+
+    stopPolling(); // 暫停一般帳務輪詢，避免重啟期間產生大量錯誤請求
+    if (restartPollTimer) clearInterval(restartPollTimer);
+
+    let attempts = 0;
+    const maxAttempts = 30;     // 30 秒逾時（Shioaji 登入＋CA 驗證可能逾 10 秒）
+    const startDelayMs = 3000;  // 先等舊進程終止，避免誤把舊進程當成「已就緒」
+
+    setTimeout(() => {
+        restartPollTimer = setInterval(async () => {
+            attempts += 1;
+            try {
+                // 注意：重啟輪詢必須走真實 fetch（檢查實體伺服器，不可被 Demo 攔截）
+                const resp = await fetch(`${API_BASE}/auth/usage`);
+                if (resp.ok) {
+                    clearInterval(restartPollTimer);
+                    restartPollTimer = null;
+                    hideRestartOverlay();
+                    showToastNotification('交易伺服器重啟完成，連線已恢復。');
+                    // 以新帳戶重新載入 session 與帳務資料
+                    state.accounts = [];
+                    await checkServerStatus();
+                    return;
+                }
+            } catch (e) { /* 尚未就緒，繼續輪詢 */ }
+            if (attempts >= maxAttempts) {
+                clearInterval(restartPollTimer);
+                restartPollTimer = null;
+                titleEl.textContent = '重啟逾時';
+                msgEl.textContent = '請手動檢查憑證路徑與終端機錯誤日誌（金鑰或 CA 設定可能有誤）。修正後可於設定頁重新切換設定檔。';
+                forceBtn.style.display = 'inline-block';
+            }
+        }, 1000);
+    }, startDelayMs);
+}
+
+function hideRestartOverlay() {
+    if (restartPollTimer) {
+        clearInterval(restartPollTimer);
+        restartPollTimer = null;
+    }
+    const overlay = document.getElementById('server-restart-overlay');
+    if (overlay) overlay.classList.remove('active');
+}
+
+// ── Demo 演示模式 (v1.6.0)：smartFetch 攔截器與高擬真假數據 ─────────────────
+// 啟用時，所有對 Shioaji Proxy 與本機帳務端點的請求都在前端以記憶體假數據回應，
+// 不發送任何實體 API 請求；可完全離線演示。驗收標準：DevTools Network 零實體請求。
+
+const DEMO_KNOWN_TW = {
+    '2330': { name: '台積電', price: 950.0 },
+    '2317': { name: '鴻海', price: 180.0 },
+    '2454': { name: '聯發科', price: 1310.0 },
+    '2603': { name: '長榮', price: 198.5 },
+    '0050': { name: '元大台灣50', price: 205.0 },
+    '0056': { name: '元大高股息', price: 38.2 },
+    '2881': { name: '富邦金', price: 92.5 },
+    '2412': { name: '中華電', price: 126.0 },
+};
+
+const DEMO_KNOWN_US = {
+    '^GSPC': { name: 'S&P 500 指數', price: 6105.3, type: 'INDEX' },
+    '^IXIC': { name: 'NASDAQ 綜合指數', price: 19987.6, type: 'INDEX' },
+    '^DJI':  { name: '道瓊工業指數', price: 44310.2, type: 'INDEX' },
+    'VOO':   { name: 'Vanguard S&P 500 ETF', price: 561.2, type: 'ETF' },
+    'QQQ':   { name: 'Invesco QQQ Trust', price: 529.8, type: 'ETF' },
+    'AAPL':  { name: 'Apple Inc.', price: 236.4, type: 'EQUITY' },
+};
+
+// PRD §2.2 初始值；其後隨輪詢以隨機漫步波動
+const demoState = {
+    balance: 1250300,
+    positions: [
+        { code: '2330', name: '台積電', avg: 910.0, shares: 2000 },
+        { code: '2317', name: '鴻海',   avg: 185.0, shares: 5000 },
+        { code: '2454', name: '聯發科', avg: 1280.0, shares: 1000 },
+        { code: '2603', name: '長榮',   avg: 190.0, shares: 3000 },
+    ],
+    quotes: {},        // code -> { ref, last, totalVol }
+    usQuotes: {},      // symbol -> { prev, last }
+    historyShape: null,
+    demoKbars: {},     // code -> Close 陣列
+    orderSeq: 1,
+};
+
+function mockResponse(data, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => data,
+        text: async () => (typeof data === 'string' ? data : (data && data.error) || JSON.stringify(data)),
+    };
+}
+
+// 以代碼決定基準價：精選股用擬真價，其他代碼以雜湊產生 20~1000 的穩定假價
+function demoSeedPrice(code) {
+    if (DEMO_KNOWN_TW[code]) return DEMO_KNOWN_TW[code].price;
+    let hsum = 0;
+    for (const ch of String(code)) hsum = (hsum * 31 + ch.charCodeAt(0)) % 99991;
+    return Math.round((20 + (hsum % 9800) / 10) * 100) / 100;
+}
+
+function demoName(code) {
+    if (DEMO_KNOWN_TW[code]) return DEMO_KNOWN_TW[code].name;
+    const pos = demoState.positions.find(p => p.code === code);
+    return (pos && pos.name) || `演示股 ${code}`;
+}
+
+function demoQuote(code) {
+    let q = demoState.quotes[code];
+    if (!q) {
+        const ref = demoSeedPrice(code);
+        q = demoState.quotes[code] = { ref, last: ref, totalVol: 1200 + Math.floor(Math.random() * 8000) };
+    }
+    return q;
+}
+
+// 隨機漫步：每次擾動 ±0.1% ~ ±0.3%（PRD §2.2 第 8 點）
+function demoWalk(price) {
+    const mag = 0.001 + Math.random() * 0.002;
+    const pct = mag * (Math.random() < 0.5 ? -1 : 1);
+    return Math.max(1, Math.round(price * (1 + pct) * 100) / 100);
+}
+
+// 擾動一檔報價並累加成交量（偏離參考價以 ±9.5% 模擬漲跌停限制）
+function demoTickQuote(code) {
+    const q = demoQuote(code);
+    q.last = demoWalk(q.last);
+    const cap = q.ref * 0.095;
+    q.last = Math.round(Math.min(q.ref + cap, Math.max(q.ref - cap, q.last)) * 100) / 100;
+    q.totalVol += 50 + Math.floor(Math.random() * 450);
+    return q;
+}
+
+function demoMarketValue() {
+    return demoState.positions.reduce((s, p) => s + demoQuote(p.code).last * p.shares, 0);
+}
+
+function demoPositions() {
+    return demoState.positions.map(p => {
+        const q = demoTickQuote(p.code);
+        const pnl = Math.round((q.last - p.avg) * p.shares);
+        return {
+            code: p.code,
+            name: p.name,
+            direction: 'Buy',
+            quantity: p.shares,   // unit=Share 模式：股數
+            price: p.avg,
+            last_price: q.last,
+            pnl,
+            pnl_rate: Math.round((q.last - p.avg) / p.avg * 10000) / 100,
+            exchange: 'TSE',
+        };
+    });
+}
+
+function demoSettlements() {
+    const amounts = [12500, -25000, 80000]; // PRD §2.2 第 4 點
+    return amounts.map((amount, t) => {
+        const d = new Date();
+        d.setDate(d.getDate() + t);
+        return { T: t, date: d.toISOString().split('T')[0], amount };
+    });
+}
+
+function demoProfitLoss() {
+    // 近 12 個月合理起伏的已實現損益（每月一筆，月中日期）
+    const seeds = [42000, -18000, 65000, 31000, -8500, 92000, 12000, 47000, -26000, 58000, 23000, 76500];
+    const now = new Date();
+    const out = [];
+    for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 15);
+        out.push({ date: d.toISOString().split('T')[0], pnl: seeds[11 - i] });
+    }
+    return out;
+}
+
+// 90 天震盪向上、帶微幅回檔的資產趨勢；終值動態校準 = 假餘額 + 假庫存市值
+function demoAssetHistory() {
+    const finalVal = Math.round(demoState.balance + demoMarketValue());
+    if (!demoState.historyShape) {
+        const pts = [];
+        let v = 0.62;
+        for (let i = 0; i < 90; i++) {
+            v += (Math.random() - 0.42) * 0.025;
+            if (i === 35 || i === 64) v -= 0.05; // 兩次明顯回檔
+            v = Math.max(0.45, Math.min(1.05, v));
+            pts.push(v);
+        }
+        const lastV = pts[pts.length - 1];
+        demoState.historyShape = pts.map(x => x / lastV); // 正規化：最後一點 = 1
+    }
+    const today = new Date();
+    return demoState.historyShape.map((shape, i) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() - (89 - i));
+        return { date: d.toISOString().split('T')[0], value: Math.round(finalVal * shape) };
+    });
+}
+
+function demoSnapshots(bodyText) {
+    let contracts = [];
+    try { contracts = (JSON.parse(bodyText || '{}').contracts) || []; } catch (e) { /* 忽略 */ }
+    return contracts.map(c => {
+        const q = demoTickQuote(c.code);
+        const change = Math.round((q.last - q.ref) * 100) / 100;
+        return {
+            code: c.code,
+            name: demoName(c.code),
+            close: q.last,
+            change_price: change,
+            change_rate: Math.round(change / q.ref * 10000) / 100,
+            open: Math.round(q.ref * 1.002 * 100) / 100,
+            high: Math.round(Math.max(q.last, q.ref * 1.012) * 100) / 100,
+            low: Math.round(Math.min(q.last, q.ref * 0.991) * 100) / 100,
+            volume: 50 + Math.floor(Math.random() * 450),
+            total_volume: q.totalVol,
+            yesterday_volume: 15000,
+            buy_volume: 10 + Math.floor(Math.random() * 500),
+            sell_volume: 10 + Math.floor(Math.random() * 500),
+            reference: q.ref,
+        };
+    });
+}
+
+// 分時走勢：09:00–13:30 每 5 分鐘共 54 點，終點貼齊現價
+function demoTicks(code) {
+    const q = demoQuote(code);
+    const n = 54;
+    const closes = [];
+    let v = q.ref;
+    for (let i = 0; i < n; i++) {
+        v = demoWalk(v);
+        closes.push(v);
+    }
+    const offset = q.last - closes[n - 1];
+    return { close: closes.map(x => Math.round((x + offset) * 100) / 100) };
+}
+
+// 日 K 線：250 個交易日收盤價（長期微升），供 MA5/20/60/240 計算
+function demoKbars(code) {
+    if (!demoState.demoKbars[code]) {
+        const q = demoQuote(code);
+        const n = 250;
+        const arr = new Array(n);
+        let v = q.ref;
+        for (let i = n - 1; i >= 0; i--) {
+            arr[i] = Math.round(v * 100) / 100;
+            v = v / (1 + (Math.random() - 0.47) * 0.018);
+        }
+        demoState.demoKbars[code] = arr;
+    }
+    return { Close: demoState.demoKbars[code] };
+}
+
+function demoAnnouncements() {
+    const subjects = [
+        '公告本公司董事會決議通過第二季合併財務報告',
+        '澄清媒體報導本公司海外擴產進度相關訊息',
+        '公告本公司受邀參加法人說明會之相關資訊',
+        '公告本公司發言人異動',
+        '公告本公司取得機器設備之重大資產交易',
+    ];
+    const codes = state.watchlist.slice(0, 5);
+    const today = new Date();
+    return codes.map((w, i) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        return {
+            code: w.code,
+            name: demoName(w.code),
+            date: d.toISOString().split('T')[0],
+            time: `${String(9 + i).padStart(2, '0')}3000`,
+            subject: subjects[i % subjects.length],
+            clause: '第 51 款',
+        };
+    });
+}
+
+function demoDividends() {
+    const codes = state.watchlist.slice(0, 4);
+    const today = new Date();
+    return codes.map((w, i) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() + 7 + i * 9);
+        const q = demoQuote(w.code);
+        return {
+            code: w.code,
+            name: demoName(w.code),
+            date: d.toISOString().split('T')[0],
+            type: i % 3 === 0 ? '息' : '權息',
+            cash_dividend: Math.round(q.ref * 0.025 * 100) / 100,
+            stock_dividend_ratio: null,
+        };
+    });
+}
+
+// 美股行情仿真（指數/ETF/個股），分時與日線皆動態合成
+function demoUsChart(urlStr) {
+    const u = new URL(urlStr, 'http://localhost');
+    const symbol = (u.searchParams.get('symbol') || '').toUpperCase();
+    const range = u.searchParams.get('range') || '1d';
+    const known = DEMO_KNOWN_US[symbol];
+    let q = demoState.usQuotes[symbol];
+    if (!q) {
+        let base = known ? known.price : null;
+        if (base == null) {
+            let hsum = 0;
+            for (const ch of symbol) hsum = (hsum * 31 + ch.charCodeAt(0)) % 99991;
+            base = Math.round((30 + (hsum % 6000) / 10) * 100) / 100;
+        }
+        q = demoState.usQuotes[symbol] = { prev: base, last: base };
+    }
+    q.last = demoWalk(q.last);
+    const n = range === '2y' ? 500 : 78;
+    const closes = [];
+    let v = q.prev;
+    for (let i = 0; i < n; i++) {
+        v = demoWalk(v);
+        closes.push(Math.round(v * 100) / 100);
+    }
+    closes[n - 1] = q.last;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const step = range === '2y' ? 86400 : 300;
+    const change = Math.round((q.last - q.prev) * 100) / 100;
+    return {
+        symbol,
+        name: known ? known.name : `${symbol} (DEMO)`,
+        currency: 'USD',
+        instrument_type: known ? known.type : 'EQUITY',
+        price: q.last,
+        prev_close: q.prev,
+        change,
+        change_rate: Math.round(change / q.prev * 10000) / 100,
+        market_state: 'REGULAR',
+        timestamps: closes.map((_, i) => nowSec - (n - 1 - i) * step),
+        close: closes,
+        open: closes.slice(),
+        high: closes.map(x => Math.round(x * 1.002 * 100) / 100),
+        low: closes.map(x => Math.round(x * 0.998 * 100) / 100),
+        volume: closes.map(() => 100000 + Math.floor(Math.random() * 900000)),
+    };
+}
+
+// 下單閉環模擬：買進加庫存扣餘額；賣出限假庫存內，成交後減庫存增餘額
+function demoPlaceOrder(bodyText) {
+    let payload = {};
+    try { payload = JSON.parse(bodyText || '{}'); } catch (e) { /* 忽略 */ }
+    const code = payload.contract && payload.contract.code;
+    const so = payload.stock_order || {};
+    const shares = (so.order_lot === 'IntradayOdd') ? (so.quantity || 0) : (so.quantity || 0) * 1000;
+    const action = so.action;
+    const price = so.price || (code ? demoQuote(code).last : 0);
+
+    if (!code || shares <= 0) {
+        return mockResponse({ error: '[DEMO 模式] 無效的委託參數' }, 400);
+    }
+    if (action === 'Sell') {
+        const pos = demoState.positions.find(p => p.code === code);
+        if (!pos || pos.shares < shares) {
+            return mockResponse({ error: `[DEMO 模式] 賣出失敗：假庫存僅持有 ${pos ? pos.shares.toLocaleString() : 0} 股，不足 ${shares.toLocaleString()} 股` }, 400);
+        }
+    }
+    if (action === 'Buy' && price * shares > demoState.balance) {
+        return mockResponse({ error: `[DEMO 模式] 買進失敗：假可用餘額不足（需 ${Math.round(price * shares).toLocaleString()} 元，餘 ${demoState.balance.toLocaleString()} 元）` }, 400);
+    }
+
+    const orderId = `DEMO-${String(demoState.orderSeq++).padStart(4, '0')}`;
+
+    // 1~2 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環
+    setTimeout(() => {
+        if (!state.demoMode) return; // 期間若已關閉 Demo，放棄模擬成交
+        if (action === 'Buy') {
+            demoState.balance = Math.round(demoState.balance - price * shares);
+            const pos = demoState.positions.find(p => p.code === code);
+            if (pos) {
+                pos.avg = Math.round(((pos.avg * pos.shares + price * shares) / (pos.shares + shares)) * 100) / 100;
+                pos.shares += shares;
+            } else {
+                demoState.positions.push({ code, name: demoName(code), avg: price, shares });
+            }
+        } else {
+            demoState.balance = Math.round(demoState.balance + price * shares);
+            const pos = demoState.positions.find(p => p.code === code);
+            pos.shares -= shares;
+            if (pos.shares <= 0) {
+                demoState.positions = demoState.positions.filter(p => p.code !== code);
+            }
+        }
+        showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${price.toFixed(2)}`);
+        _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
+        fetchData();
+    }, 1000 + Math.random() * 1000);
+
+    return mockResponse({ order: { id: orderId, price, quantity: so.quantity }, status: { status: 'PendingSubmit' } });
+}
+
+// ── smartFetch：唯一網路收口。Demo 啟用時攔截，否則走真實 fetch ────────────
+async function smartFetch(url, options = {}) {
+    if (!state.demoMode) return fetch(url, options);
+
+    const method = (options.method || 'GET').toUpperCase();
+    const body = options.body;
+
+    // Shioaji Proxy 端點
+    if (url.includes('/proxy/api/v1/')) {
+        if (url.includes('/auth/usage')) return mockResponse({ connections: 1, bytes: 8421376, limit_bytes: 536870912 });
+        if (url.includes('/auth/accounts')) return mockResponse([{ account_type: 'S', broker_id: '9A95', account_id: '8888888', person_id: 'DEMO000000', signed: true, name: '演示帳戶' }]);
+        if (url.includes('/portfolio/account_balance')) return mockResponse({ acc_balance: demoState.balance });
+        if (url.includes('/portfolio/trading_limits')) return mockResponse({ trading_limit: 5000000, trading_used: 850000, trading_available: 4150000 });
+        if (url.includes('/portfolio/position_unit')) return mockResponse(demoPositions());
+        if (url.includes('/portfolio/settlements')) return mockResponse(demoSettlements());
+        if (url.includes('/portfolio/profit_loss')) return mockResponse(demoProfitLoss());
+        if (url.includes('/data/snapshots')) return mockResponse(demoSnapshots(body));
+        if (url.includes('/data/contracts/')) {
+            const code = url.split('/data/contracts/')[1].split('?')[0];
+            return mockResponse({ code, name: demoName(code), exchange: 'TSE', reference: demoQuote(code).ref });
+        }
+        if (url.includes('/data/kbars')) {
+            let code = '';
+            try { code = JSON.parse(body || '{}').contract.code; } catch (e) { /* 忽略 */ }
+            return mockResponse(demoKbars(code));
+        }
+        if (url.includes('/data/ticks')) {
+            let code = '';
+            try { code = JSON.parse(body || '{}').contract.code; } catch (e) { /* 忽略 */ }
+            return mockResponse(demoTicks(code));
+        }
+        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
+        console.warn(`[DEMO] 未攔截的 proxy 端點（回傳空物件防洩漏）: ${method} ${url}`);
+        return mockResponse({});
+    }
+
+    // 本機後端端點
+    if (url.includes('/api/trade-permission')) return mockResponse({ trading_permitted: true, reason: '' });
+    if (url.includes('/api/asset-history')) return mockResponse(demoAssetHistory()); // GET/POST/匯入/刪除一律回傳唯讀假歷史
+    if (url.includes('/api/twse-announcements')) return mockResponse(demoAnnouncements());
+    if (url.includes('/api/twse-dividends')) return mockResponse(demoDividends());
+    if (url.includes('/api/us-chart')) return mockResponse(demoUsChart(url));
+
+    console.warn(`[DEMO] 未攔截的端點（改走真實請求）: ${method} ${url}`);
+    return fetch(url, options);
+}
+
+// ── Demo 開關 UI 與徽章 ─────────────────────────────────────────────────────
+function initDemoMode() {
+    updateDemoBadge();
+    const toggle = document.getElementById('demo-mode-toggle');
+    if (!toggle) return;
+    toggle.checked = state.demoMode;
+    toggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // 開啟：重新載入頁面，所有資料改以攔截器供應
+            localStorage.setItem('demoMode', 'true');
+            showToastNotification('[DEMO 模式] 已啟用，頁面即將重新載入...');
+            setTimeout(() => location.reload(), 600);
+        } else {
+            // 關閉會還原真實資產，須先通過安全驗證（答對 PEA6）
+            e.target.checked = true; // 先還原勾選，驗證通過才真正關閉
+            openCredentialsLockModal(() => {
+                localStorage.setItem('demoMode', 'false');
+                showToastNotification('已關閉 Demo 模式，正在還原真實帳戶資料...');
+                setTimeout(() => location.reload(), 600);
+            });
+        }
+    });
+}
+
+function updateDemoBadge() {
+    const badge = document.getElementById('demo-badge');
+    if (badge) badge.style.display = state.demoMode ? 'inline-block' : 'none';
 }
