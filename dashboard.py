@@ -15,6 +15,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 
+# 解決 Windows 主控台 Unicode 輸出錯誤 (CP950 編碼問題)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 WORKSPACE_DIR = Path(__file__).parent.resolve()
 WEB_DIR = WORKSPACE_DIR / "web"
 HISTORY_FILE = WORKSPACE_DIR / "asset_history.json"
@@ -1050,12 +1058,12 @@ def main():
         for _ in range(30):
             try:
                 _ur.urlopen("http://127.0.0.1:8080/api/v1/auth/usage", timeout=1)
-                print("✅ Shioaji API 伺服器已就緒")
+                print("[OK] Shioaji API 伺服器已就緒")
                 break
             except Exception:
                 time.sleep(1)
         else:
-            print("⚠ 等待 Shioaji API 伺服器逾時，繼續嘗試開啟瀏覽器...")
+            print("[WARN] 等待 Shioaji API 伺服器逾時，繼續嘗試開啟瀏覽器...")
     
     # Auto-open browser
     print("正在自動開啟瀏覽器至 http://127.0.0.1:8081...")
