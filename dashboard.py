@@ -664,6 +664,48 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         })
                     except Exception as log_err:
                         print(f"\033[93m⚠ 委託紀錄寫入失敗（不影響下單）：{log_err}\033[0m")
+
+                # v1.7.2 改價/減量/刪單成功 → 也追加一筆紀錄（type 區分；顯示資訊由前端
+                # X-Log-Info header 提供——上游 schema 僅收 trade_id，proxy 讀取此 header 但不轉發）
+                MGMT_LOG_TYPES = {
+                    "api/v1/order/update_price": "update_price",
+                    "api/v1/order/update_qty": "update_qty",
+                    "api/v1/order/cancel_order": "cancel",
+                }
+                if method == "POST" and rel_path in MGMT_LOG_TYPES and resp.status == 200:
+                    try:
+                        import urllib.parse as _up
+                        req_body = json.loads(req_data.decode('utf-8')) if req_data else {}
+                        info = {}
+                        raw_info = self.headers.get('X-Log-Info', '')
+                        if raw_info:
+                            try:
+                                info = json.loads(_up.unquote(raw_info))
+                            except Exception:
+                                info = {}
+                        log_type = MGMT_LOG_TYPES[rel_path]
+                        new_price = req_body.get("price")
+                        reduce_qty = req_body.get("quantity")
+                        old_price = info.get("old_price")
+                        if log_type == "update_price":
+                            detail = f"{old_price}→{new_price}" if old_price is not None else f"→{new_price}"
+                        elif log_type == "update_qty":
+                            detail = f"-{reduce_qty}"
+                        else:
+                            detail = "剩餘全數取消"
+                        append_trade_log({
+                            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "type": log_type,
+                            "order_id": req_body.get("trade_id", ""),
+                            "code": info.get("code", ""),
+                            "action": info.get("action", ""),
+                            "price": new_price if new_price is not None else (old_price or 0),
+                            "quantity": reduce_qty if reduce_qty is not None else (info.get("remaining") or 0),
+                            "order_lot": info.get("order_lot", ""),
+                            "detail": detail,
+                        })
+                    except Exception as log_err:
+                        print(f"\033[93m⚠ 改單紀錄寫入失敗（不影響改單）：{log_err}\033[0m")
         except urllib.error.HTTPError as e:
             try:
                 err_data = e.read()
