@@ -907,14 +907,24 @@ async function submitOrderMgmt() {
 
     closeOrderMgmt();
     try {
+        // v1.7.2 顯示資訊隨 header 送給 proxy 寫入委託紀錄（上游 schema 僅收 trade_id，header 不轉發）
+        const o = trade.order || {}, st = trade.status || {}, c = trade.contract || {};
+        const logInfo = encodeURIComponent(JSON.stringify({
+            code: c.code || '',
+            action: o.action || '',
+            order_lot: o.order_lot || '',
+            old_price: (st.modified_price > 0 ? st.modified_price : o.price) || 0,
+            remaining: remaining,
+        }));
         const resp = await smartFetch(`${API_BASE}${endpoint}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-Log-Info': logInfo },
             body: JSON.stringify(payload)
         });
         if (resp.ok) {
             showToastNotification(`委託單 #${tradeId} ${actionText}要求已送出，等待交易所回報...`);
             setTimeout(fetchPendingOrders, 1200); // 略等回報後重拉（SSE 亦會觸發）
+            setTimeout(fetchTradeLogs, 1200);     // v1.7.2 改單也產生新紀錄
         } else {
             alert(`${actionText}失敗：${await resp.text()}`);
         }
@@ -948,16 +958,25 @@ function renderTradeLogs(logs) {
     tbody.innerHTML = '';
     const list = Array.isArray(logs) ? logs : [];
     empty.style.display = list.length === 0 ? '' : 'none';
+    const TYPE_LABELS = { place: '下單', update_price: '改價', update_qty: '減量', cancel: '刪單' }; // 無 type 的舊紀錄視為下單
     list.forEach(log => {
         const isBuy = log.action === 'Buy';
+        const type = log.type || 'place';
         const unit = log.order_lot === 'IntradayOdd' ? '股' : '張';
+        // 改價顯示「舊→新」、減量顯示「-N」、刪單顯示說明
+        const priceCell = (type === 'update_price' && log.detail) ? log.detail : formatDecimal(log.price, 2);
+        const qtyCell = type === 'update_qty' ? `${log.detail || '-' + log.quantity} ${unit}`
+                      : type === 'cancel' ? (log.detail || '剩餘全數取消')
+                      : `${formatVolume(log.quantity)} ${unit}`;
+        const typeColor = type === 'cancel' ? 'var(--text-muted)' : (type === 'place' ? 'var(--text-primary)' : 'var(--color-accent)');
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td class="mono">${log.ts || '--'}</td>
-            <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
+            <td style="color:${typeColor}">${TYPE_LABELS[type] || type}</td>
+            <td class="${isBuy ? 'val-up' : 'val-down'}">${log.action ? (isBuy ? '買進' : '賣出') : '--'}</td>
             <td class="mono">${log.code || '--'}</td>
-            <td class="mono mask-money">${formatDecimal(log.price, 2)}</td>
-            <td class="mono mask-money">${formatVolume(log.quantity)} ${unit}</td>
+            <td class="mono mask-money">${priceCell}</td>
+            <td class="mono mask-money">${qtyCell}</td>
             <td class="mono">${log.order_id || '--'}</td>`;
         tbody.appendChild(tr);
     });
@@ -3953,11 +3972,28 @@ function _demoFindPending(tradeId) {
     return demoState.pendingOrders.find(t => t.order.id === tradeId);
 }
 
+function _demoMgmtLog(t, type, price, quantity, detail) {
+    demoState.tradeLogs.unshift({
+        ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        type,
+        order_id: t.order.id,
+        code: t.contract.code,
+        action: t.order.action,
+        price,
+        quantity,
+        order_lot: t.order.order_lot,
+        detail,
+    });
+    demoState.tradeLogs = demoState.tradeLogs.slice(0, 30);
+}
+
 function demoCancelOrder(bodyText) {
     let trade_id = '';
     try { trade_id = JSON.parse(bodyText || '{}').trade_id; } catch (e) { /* 忽略 */ }
     const t = _demoFindPending(trade_id);
     if (!t) return mockResponse({ error: '[DEMO 模式] 查無此委託或已成交' }, 400);
+    _demoMgmtLog(t, 'cancel', t.status.modified_price > 0 ? t.status.modified_price : t.order.price,
+        t.status.order_quantity - (t.status.cancel_quantity || 0) - (t.status.deal_quantity || 0), '剩餘全數取消');
     demoState.cancelledIds.add(trade_id);
     t.status.status = 'Cancelled';
     t.status.cancel_quantity = t.status.order_quantity - (t.status.deal_quantity || 0);
@@ -3973,12 +4009,15 @@ function demoUpdateOrder(bodyText, kind) {
     if (kind === 'price') {
         const p = Number(body.price);
         if (!(p > 0)) return mockResponse({ error: '[DEMO 模式] 無效的新價格' }, 400);
+        const oldP = t.status.modified_price > 0 ? t.status.modified_price : t.order.price;
+        _demoMgmtLog(t, 'update_price', p, 0, `${oldP}→${p}`);
         t.status.modified_price = p;
         t.order.price = t.order.price; // 原始價保留，顯示層以 modified_price 為準
     } else {
         const q = parseInt(body.quantity);
         const remaining = t.status.order_quantity - (t.status.cancel_quantity || 0) - (t.status.deal_quantity || 0);
         if (!(q > 0) || q > remaining) return mockResponse({ error: `[DEMO 模式] 減量數須為 1 ~ ${remaining}` }, 400);
+        _demoMgmtLog(t, 'update_qty', t.status.modified_price > 0 ? t.status.modified_price : t.order.price, q, `-${q}`);
         t.status.cancel_quantity = (t.status.cancel_quantity || 0) + q;
         if (t.status.order_quantity - t.status.cancel_quantity - (t.status.deal_quantity || 0) <= 0) {
             // 全數減量 → 等同刪單
