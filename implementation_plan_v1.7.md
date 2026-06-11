@@ -1,11 +1,20 @@
-# Implementation Plan - v1.7.0【功能 2、3 已完工；功能 1 待 P0 盤中驗證】
+# Implementation Plan - v1.7.0【全部完工】
 
 ## 完工狀態（2026-06-11）
 
 * **功能 3 預估金額試算**：完成。抽屜 `#order-est-amount` 即時試算 + 確認 Modal `#conf-est-amount`；MKT 顯示參考提示。
 * **功能 2 委託紀錄**：完成。後端 `append_trade_log`（lock + 原子寫入 + 損壞自復原）、`GET /api/trade-logs`、place_order 成功攔截；前端 `tradelogs` 卡片（納入卡片自訂）、Demo 假紀錄閉環。`trade_logs.json` 已被 .gitignore 既有 `*.json` 規則涵蓋。
-* **功能 1 未成交委託**：未動工，待盤中實測 `/order/trades`（見 P0 章節，Console 驗證碼可直接貼）。
-* **驗證紀錄**：py_compile ✓、node --check ✓、後端隔離測試 13/13（追加/裁切 30/損壞復原/並發 40 筆/端點 200/上游 500 不寫入/權限關閉 400 零上游/非下單端點不寫入）、前端 Node 斷言 14/14（試算邊界、Demo 紀錄閉環、上限 30、賣出超量不記錄、攔截零實體請求、非 Demo 直通）、新元素 id 交叉比對全數 1:1。
+* **功能 1 未成交委託**：完成（2026-06-11 盤後）。P0 改以 daemon 的 `/openapi.json` 規格 + 實機盤後請求驗證：
+  - `POST /api/v1/order/trades` 存在，body 為 AccountRequest（全欄位 nullable，`{}` 合法）；
+  - 規格明示「update status first, then list from cache」→ **狀態自動刷新，無需另呼叫**（原最大風險解除）；
+  - 盤後回 200 + `[]`（非 trading_limits 的 500）→ 不需 isTradingHours 跳過；
+  - 回傳 Trade = { contract: {code, exchange, security_type}, order: {id, action, price, quantity, order_lot, ...}, status: {status, order_quantity, deal_quantity, modified_price, order_ts, ...} }；contract **無 name 欄位**，前端以庫存/自選快取補名稱；
+  - Status enum 含 Inactive（無效單），**不列入**未成交（僅 PreSubmitted/PendingSubmit/Submitted/PartFilled）；
+  - 改價後價格以 `modified_price > 0 ? modified_price : order.price` 顯示；order_ts 含秒/毫秒防禦轉換。
+  實作：`pendingorders` 卡片（卡片自訂納入）、fetchPendingOrders 併入帳務輪次、SSE order_event debounce 2s 觸發重拉、Demo 假未成交閉環（下單進清單、模擬成交移除）。
+  **殘留驗證項**：盤中實單的狀態即時性（PendingSubmit→Submitted→成交移除）尚未實測，下次盤中下單時觀察即可，無需改碼。
+* **驗證紀錄（功能 1 完工後更新）**：py_compile ✓、node --check ✓、後端隔離測試 10/10、前端 Node 斷言 16/16（新增：假未成交同構欄位、/order/trades 攔截、狀態過濾集合、下單失敗不進清單、成交移除、時戳防禦）、新元素 id 交叉比對 1:1、版號 v1.7.0（index.html/README/task.md）。
+* **原驗證紀錄**：py_compile ✓、node --check ✓、後端隔離測試 13/13（追加/裁切 30/損壞復原/並發 40 筆/端點 200/上游 500 不寫入/權限關閉 400 零上游/非下單端點不寫入）、前端 Node 斷言 14/14（試算邊界、Demo 紀錄閉環、上限 30、賣出超量不記錄、攔截零實體請求、非 Demo 直通）、新元素 id 交叉比對全數 1:1。
 * 注意：本機 sandbox 掛載快照曾出現過期截斷視圖；實際檔案（Windows 端）已逐一確認完整。若 git 操作見異常 diff，先重新整理工作目錄再判讀。
 
 > 本文件為技術設計與 Pseudocode。v1.6.0 完工紀錄見 `implementation_plan.md`。
