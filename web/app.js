@@ -2,6 +2,15 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.6.2 (2026-06-11)
+   - [優化] 前端所有數值（包含自選股、歷史走勢、庫存部位等）均加入千分位分隔號，提升閱讀清晰度。
+   v1.6.1 (2026-06-11)
+   - [修正] 修正切換至真實模式時，自動清除 Demo 模式殘留的自選股假名稱 (「演示股 XXX」) 並重新查詢真實名稱。
+   - [修正] 優化自選股無名稱項目重新查詢流程，支援 STK/IND 雙重類型 fallback。
+   v1.6.0 (2026-06-11)
+   - [功能] API 憑證多組管理（credentials.json、遮蔽傳輸、切換自動重啟 shioaji + 輪詢遮罩）。
+   - [功能] Demo 演示模式（smartFetch 前端攔截、零實體請求、隨機漫步、下單成交模擬、DEMO 徽章）。
+   - [修正] 修復 shioaji.exe 背景殘留佔用 Port 8080 導致金鑰切換失敗的 Bug。
    v1.5.2 (2026-06-10)
    - [修正] 修正 dashboard.py 中 TWSE 憑證錯誤處理的 _twse_needs_relaxed_ssl_lock 變數未定義 NameError 隱患
    - [修正] 修正 365 天資產歷史清理邏輯以避免手動導入超長歷史時被截斷遺失，改為筆數超過 3000 筆時僅保留最近 3000 筆
@@ -388,9 +397,9 @@ async function checkServerStatus() {
 }
 
 function updateUsageUI(usage) {
-    document.getElementById('api-connections').textContent = usage.connections;
-    const mbUsed = (usage.bytes / 1024 / 1024).toFixed(2);
-    const mbLimit = (usage.limit_bytes / 1024 / 1024).toFixed(0);
+    document.getElementById('api-connections').textContent = formatVolume(usage.connections);
+    const mbUsed = formatDecimal(usage.bytes / 1024 / 1024, 2);
+    const mbLimit = formatDecimal(usage.limit_bytes / 1024 / 1024, 0);
     
     document.getElementById('api-bytes-val').textContent = `${mbUsed} MB`;
     document.getElementById('api-bytes-summary').textContent = `已用流量: ${mbUsed} MB / 每日上限: ${mbLimit} MB`;
@@ -763,8 +772,8 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.ts || '--'}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
             <td class="mono">${log.code || '--'}</td>
-            <td class="mono mask-money">${Number(log.price || 0).toFixed(2)}</td>
-            <td class="mono mask-money">${log.quantity} ${unit}</td>
+            <td class="mono mask-money">${formatDecimal(log.price, 2)}</td>
+            <td class="mono mask-money">${formatVolume(log.quantity)} ${unit}</td>
             <td class="mono">${log.order_id || '--'}</td>`;
         tbody.appendChild(tr);
     });
@@ -786,7 +795,7 @@ function renderStockPositions() {
         const pnl = pos.pnl || 0;
         const pnlClass = pnl >= 0 ? 'val-up' : 'val-down';
         const pnlRateVal = pos.pnl_rate !== undefined ? pos.pnl_rate : (pos.price > 0 ? ((pos.last_price - pos.price) / pos.price) * 100 : 0);
-        const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${pnlRateVal.toFixed(2)}%`;
+        const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${formatDecimal(pnlRateVal, 2)}%`;
         const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
         // unit=Share 時 quantity 已是股數（含零股）；Lot 時需 ×1000
         const qtyShares = state.stockPositionUnit === 'Share'
@@ -799,8 +808,8 @@ function renderStockPositions() {
             <td>${pos.name || '證券'}</td>
             <td>${dirStr}</td>
             <td class="mono">${qtyStr}</td>
-            <td class="mono">${pos.price.toFixed(2)}</td>
-            <td class="mono">${pos.last_price.toFixed(2)}</td>
+            <td class="mono">${formatDecimal(pos.price, 2)}</td>
+            <td class="mono">${formatDecimal(pos.last_price, 2)}</td>
             <td class="mono ${pnlClass}">${formatCurrency(pnl)}</td>
             <td class="mono ${pnlClass}">${pnlPct}</td>
         `;
@@ -876,6 +885,14 @@ async function initWatchlist() {
 
     if (saved) {
         state.watchlist = JSON.parse(saved);
+        // 如果處於真實模式，將先前 Demo 模式遺留下來的「演示股」名稱清除，促使系統重新向後端查詢真實名稱
+        if (!state.demoMode) {
+            state.watchlist.forEach(item => {
+                if (item.name && (item.name.startsWith('演示股 ') || item.name.startsWith('演示股'))) {
+                    item.name = '';
+                }
+            });
+        }
     } else {
         state.watchlist = defaultList.map(code => ({ code, name: '', exchange: 'TSE', prices: [] }));
         saveWatchlistLocal();
@@ -886,7 +903,12 @@ async function initWatchlist() {
     if (nameless.length > 0) {
         await Promise.all(nameless.map(async item => {
             try {
-                const resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=STK`);
+                const secType = item.security_type || 'STK';
+                let resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${secType}`);
+                if (!resp.ok) {
+                    const altType = secType === 'STK' ? 'IND' : 'STK';
+                    resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${altType}`);
+                }
                 if (resp.ok) {
                     const contract = await resp.json();
                     item.name = contract.name || item.code;
@@ -1081,13 +1103,13 @@ function renderWatchlist() {
         }
         div.onclick = () => selectWatchlistItem(item.code);
         
-        const priceStr = item.close ? item.close.toFixed(2) : '--';
+        const priceStr = item.close ? formatDecimal(item.close, 2) : '--';
         const rateVal = item.change_rate || 0;
         
         // 指數與個股統一顯示「漲跌點數 (漲跌百分比)」雙格式
         const diffVal = item.change_price ?? (item.close && item.reference ? item.close - item.reference : null);
-        const diffStr = diffVal != null ? `${diffVal >= 0 ? '+' : ''}${diffVal.toFixed(2)}` : '--';
-        const ratePctStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
+        const diffStr = diffVal != null ? `${diffVal >= 0 ? '+' : ''}${formatDecimal(diffVal, 2)}` : '--';
+        const ratePctStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${formatDecimal(rateVal, 2)}%` : '--';
         const rateStr = `${diffStr} (${ratePctStr})`;
         const rateClass = rateVal > 0 ? 'badge-up' : (rateVal < 0 ? 'badge-down' : 'metric-subtitle');
         
@@ -1261,17 +1283,17 @@ function updateDetailView(code) {
     
     document.getElementById('detail-code').textContent = item.code;
     document.getElementById('detail-name').textContent = item.name || '自選股';
-    document.getElementById('detail-ref').textContent = item.reference || '--';
-    document.getElementById('detail-open').textContent = item.open || '--';
-    document.getElementById('detail-high').textContent = item.high || '--';
-    document.getElementById('detail-low').textContent = item.low || '--';
+    document.getElementById('detail-ref').textContent = formatDecimal(item.reference, 2);
+    document.getElementById('detail-open').textContent = formatDecimal(item.open, 2);
+    document.getElementById('detail-high').textContent = formatDecimal(item.high, 2);
+    document.getElementById('detail-low').textContent = formatDecimal(item.low, 2);
     
     const closeEl = document.getElementById('detail-close');
-    closeEl.textContent = item.close || '--';
+    closeEl.textContent = formatDecimal(item.close, 2);
     const rateVal = item.change_rate || 0;
     closeEl.className = rateVal > 0 ? 'val-up' : (rateVal < 0 ? 'val-down' : '');
     
-    document.getElementById('detail-volume').textContent = item.total_volume || '--';
+    document.getElementById('detail-volume').textContent = formatVolume(item.total_volume);
 
     // 更新盤中委買委賣多空力道對比條
     updateStrengthBar(item);
@@ -1344,7 +1366,7 @@ async function loadMAStats(code) {
             if (!el) return;
             if (closes.length < period) { el.textContent = '--'; return; }
             const ma = closes.slice(-period).reduce((a, b) => a + b, 0) / period;
-            el.textContent = ma.toFixed(2);
+            el.textContent = formatDecimal(ma, 2);
         });
     } catch (e) {
         console.warn('loadMAStats 失敗', e);
@@ -1524,8 +1546,8 @@ async function renderDetailMAChart(code) {
         ctx.font = '10px var(--font-mono)';
         ctx.fillStyle = theme === 'dark' ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.8)';
         ctx.textAlign = 'right';
-        ctx.fillText(`高 ${Math.max(...closes).toFixed(2)}`, w - 5, 14);
-        ctx.fillText(`低 ${Math.min(...closes).toFixed(2)}`, w - 5, h - 6);
+        ctx.fillText(`高 ${formatDecimal(Math.max(...closes), 2)}`, w - 5, 14);
+        ctx.fillText(`低 ${formatDecimal(Math.min(...closes), 2)}`, w - 5, h - 6);
 
         // 圖例
         legendEl.innerHTML = MA_DEFS.map(d =>
@@ -1538,7 +1560,7 @@ async function renderDetailMAChart(code) {
             const el = document.getElementById(maIdMap[ma.period]);
             if (!el) return;
             const latest = [...ma.values].reverse().find(v => v !== null);
-            el.textContent = latest !== undefined ? latest.toFixed(2) : '--';
+            el.textContent = latest !== undefined ? formatDecimal(latest, 2) : '--';
         });
 
     } catch (e) {
@@ -1555,7 +1577,7 @@ function calcOrderAmount(price, qty, lotType) {
 }
 
 function formatOrderAmount(amount) {
-    return amount === null ? '--' : `$${Math.round(amount).toLocaleString()}`;
+    return amount === null ? '--' : `$${Math.round(amount).toLocaleString('en-US')}`;
 }
 
 function updateOrderEstimate() {
@@ -1637,8 +1659,8 @@ async function initDrawerControls() {
         document.getElementById('conf-lot').textContent = orderLotText;
         document.getElementById('conf-cond').textContent = orderCondText;
         document.getElementById('conf-price-type').textContent = priceType === 'LMT' ? '限價 (LMT)' : '市價 (MKT)';
-        document.getElementById('conf-price').textContent = `${price.toFixed(2)} 元`;
-        document.getElementById('conf-qty').textContent = `${qty} ${lotType === 'Common' ? '張' : '股'}`;
+        document.getElementById('conf-price').textContent = `${formatDecimal(price, 2)} 元`;
+        document.getElementById('conf-qty').textContent = `${formatVolume(qty)} ${lotType === 'Common' ? '張' : '股'}`;
         document.getElementById('conf-est-amount').textContent =
             formatOrderAmount(calcOrderAmount(price, qty, lotType));
 
@@ -2354,7 +2376,7 @@ function renderDividends(list) {
         const div = document.createElement('div');
         div.className = 'dividend-item';
         const amount = d.cash_dividend != null
-            ? `${d.cash_dividend.toFixed(2)} 元/股`
+            ? `${formatDecimal(d.cash_dividend, 2)} 元/股`
             : (d.stock_dividend_ratio ? `配股率 ${d.stock_dividend_ratio}` : '尚未公告');
         div.innerHTML = `
             <span><span class="div-date">${d.date}</span>　<span class="mono">${d.code}</span> ${escapeHtml(d.name || '')}</span>
@@ -2623,6 +2645,20 @@ function formatCurrency(val) {
     return Number(val).toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 
+function formatDecimal(val, decimals = 2) {
+    if (val === null || val === undefined || isNaN(Number(val))) return '--';
+    return Number(val).toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatVolume(val) {
+    if (val === null || val === undefined || isNaN(Number(val))) return '--';
+    return Number(val).toLocaleString('en-US');
+}
+
+
 // ── 美股自選監控（Yahoo Finance 經 dashboard.py 代理）────────────────────
 // 資料路徑：前端 → /api/us-chart（代碼格式驗證 + 後端快取）→ Yahoo Finance
 const US_DEFAULT_ITEMS = [
@@ -2840,11 +2876,11 @@ function renderUsList() {
         div.className = isIndex ? 'watchlist-item watchlist-item-index' : 'watchlist-item';
         div.onclick = () => selectUsItem(item.symbol);
 
-        const priceStr = q && q.price != null ? q.price.toFixed(2) : '--';
+        const priceStr = q && q.price != null ? formatDecimal(q.price, 2) : '--';
         const chg = q && q.change != null ? q.change : 0;
-        const ratePctStr = q && q.change_rate != null ? `${q.change_rate >= 0 ? '+' : ''}${q.change_rate.toFixed(2)}%` : '--';
+        const ratePctStr = q && q.change_rate != null ? `${q.change_rate >= 0 ? '+' : ''}${formatDecimal(q.change_rate, 2)}%` : '--';
         // 與台股一致：指數與個股統一顯示「漲跌點數 (漲跌百分比)」雙格式
-        const diffStr = q && q.change != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}` : '--';
+        const diffStr = q && q.change != null ? `${chg >= 0 ? '+' : ''}${formatDecimal(chg, 2)}` : '--';
         const rateStr = `${diffStr} (${ratePctStr})`;
         const rateClass = chg > 0 ? 'badge-up' : (chg < 0 ? 'badge-down' : 'metric-subtitle');
 
@@ -2913,17 +2949,17 @@ function updateUsDetailFields(symbol) {
     const removeBtn = document.getElementById('btn-remove-us');
     removeBtn.style.display = 'block';
     removeBtn.onclick = () => removeUsItem(symbol);
-    document.getElementById('us-detail-ref').textContent = q.prev_close != null ? q.prev_close.toFixed(2) : '--';
+    document.getElementById('us-detail-ref').textContent = formatDecimal(q.prev_close, 2);
 
     const opens = (q.open || []).filter(v => v != null);
     const highs = (q.high || []).filter(v => v != null);
     const lows  = (q.low  || []).filter(v => v != null);
-    document.getElementById('us-detail-open').textContent = opens.length ? opens[0].toFixed(2) : '--';
-    document.getElementById('us-detail-high').textContent = highs.length ? Math.max(...highs).toFixed(2) : '--';
-    document.getElementById('us-detail-low').textContent  = lows.length  ? Math.min(...lows).toFixed(2)  : '--';
+    document.getElementById('us-detail-open').textContent = opens.length ? formatDecimal(opens[0], 2) : '--';
+    document.getElementById('us-detail-high').textContent = highs.length ? formatDecimal(Math.max(...highs), 2) : '--';
+    document.getElementById('us-detail-low').textContent  = lows.length  ? formatDecimal(Math.min(...lows), 2)  : '--';
 
     const closeEl = document.getElementById('us-detail-close');
-    closeEl.textContent = q.price != null ? q.price.toFixed(2) : '--';
+    closeEl.textContent = formatDecimal(q.price, 2);
     const rateVal = q.change_rate || 0;
     closeEl.className = rateVal > 0 ? 'val-up' : (rateVal < 0 ? 'val-down' : '');
 
@@ -2954,7 +2990,7 @@ async function loadUsMAStats(symbol) {
             if (!el) return;
             if (closes.length < period) { el.textContent = '--'; return; }
             const ma = closes.slice(-period).reduce((a, b) => a + b, 0) / period;
-            el.textContent = ma.toFixed(2);
+            el.textContent = formatDecimal(ma, 2);
         });
     } catch (e) {
         console.warn('[美股] loadUsMAStats 失敗', e);
@@ -3107,8 +3143,8 @@ async function renderUsMAChart(symbol) {
         ctx.font = '10px var(--font-mono)';
         ctx.fillStyle = theme === 'dark' ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.8)';
         ctx.textAlign = 'right';
-        ctx.fillText(`高 ${Math.max(...closes).toFixed(2)}`, w - 5, 14);
-        ctx.fillText(`低 ${Math.min(...closes).toFixed(2)}`, w - 5, h - 6);
+        ctx.fillText(`高 ${formatDecimal(Math.max(...closes), 2)}`, w - 5, 14);
+        ctx.fillText(`低 ${formatDecimal(Math.min(...closes), 2)}`, w - 5, h - 6);
 
         // 圖例
         legendEl.innerHTML = MA_DEFS.map(d =>
@@ -3121,7 +3157,7 @@ async function renderUsMAChart(symbol) {
             const el = document.getElementById(maIdMap[ma.period]);
             if (!el) return;
             const latest = [...ma.values].reverse().find(v => v !== null);
-            el.textContent = latest !== undefined && latest !== null ? latest.toFixed(2) : '--';
+            el.textContent = latest !== undefined && latest !== null ? formatDecimal(latest, 2) : '--';
         });
 
     } catch (e) {
@@ -3384,14 +3420,60 @@ function hideRestartOverlay() {
 // 不發送任何實體 API 請求；可完全離線演示。驗收標準：DevTools Network 零實體請求。
 
 const DEMO_KNOWN_TW = {
+    // 指數 / 大盤
+    '001': { name: '加權指數', price: 22000.0 },
+    'TSE001': { name: '加權指數', price: 22000.0 },
+    'OTC101': { name: '櫃買指數', price: 260.0 },
+    
+    // 大型權值股
     '2330': { name: '台積電', price: 950.0 },
     '2317': { name: '鴻海', price: 180.0 },
     '2454': { name: '聯發科', price: 1310.0 },
     '2603': { name: '長榮', price: 198.5 },
+    '2303': { name: '聯電', price: 55.0 },
+    '2382': { name: '廣達', price: 280.0 },
+    '2301': { name: '光寶科', price: 105.0 },
+    '2409': { name: '友達', price: 18.0 },
+    '3481': { name: '群創', price: 15.0 },
+    '2308': { name: '台達電', price: 380.0 },
+    '2324': { name: '仁寶', price: 35.0 },
+    '2353': { name: '宏碁', price: 45.0 },
+    '2357': { name: '華碩', price: 480.0 },
+    '3231': { name: '緯創', price: 110.0 },
+    '2337': { name: '旺宏', price: 26.0 },
+
+    // 熱門 ETF / 槓桿型
     '0050': { name: '元大台灣50', price: 205.0 },
     '0056': { name: '元大高股息', price: 38.2 },
+    '00878': { name: '國泰永續高股息', price: 22.8 },
+    '00919': { name: '群益台灣精選高息', price: 25.5 },
+    '00929': { name: '復華台灣科技優息', price: 20.0 },
+    '00940': { name: '元大台灣價值高息', price: 9.8 },
+    '00713': { name: '元大台灣高息低波', price: 57.5 },
+    '006208': { name: '富邦台50', price: 120.0 },
+    '00631L': { name: '元大台灣50正2', price: 230.0 },
+    '00632R': { name: '元大台灣50反1', price: 3.5 },
+    '00679B': { name: '元大美債20年', price: 30.5 },
+    '00680L': { name: '元大美債20年正2', price: 9.2 },
+    '00715L': { name: '期街口布蘭特正2', price: 14.5 },
+
+    // 金融股
     '2881': { name: '富邦金', price: 92.5 },
+    '2882': { name: '國泰金', price: 60.0 },
+    '2884': { name: '玉山金', price: 28.5 },
+    '2886': { name: '兆豐金', price: 40.0 },
+    '2891': { name: '中信金', price: 37.0 },
+    '2892': { name: '第一金', price: 28.0 },
+    '5880': { name: '合庫金', price: 26.5 },
+    
+    // 傳產與其他
     '2412': { name: '中華電', price: 126.0 },
+    '2002': { name: '中鋼', price: 23.0 },
+    '1301': { name: '台塑', price: 60.0 },
+    '2609': { name: '陽明', price: 75.0 },
+    '2615': { name: '萬海', price: 80.0 },
+    '2618': { name: '長榮航', price: 36.0 },
+    '2610': { name: '華航', price: 23.0 },
 };
 
 const DEMO_KNOWN_US = {
@@ -3736,7 +3818,7 @@ function demoPlaceOrder(bodyText) {
                 demoState.positions = demoState.positions.filter(p => p.code !== code);
             }
         }
-        showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${price.toFixed(2)}`);
+        showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${formatDecimal(price, 2)}`);
         _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
         fetchData();
     }, 1000 + Math.random() * 1000);
