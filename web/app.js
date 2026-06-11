@@ -842,6 +842,14 @@ async function initWatchlist() {
 
     if (saved) {
         state.watchlist = JSON.parse(saved);
+        // 如果處於真實模式，將先前 Demo 模式遺留下來的「演示股」名稱清除，促使系統重新向後端查詢真實名稱
+        if (!state.demoMode) {
+            state.watchlist.forEach(item => {
+                if (item.name && (item.name.startsWith('演示股 ') || item.name.startsWith('演示股'))) {
+                    item.name = '';
+                }
+            });
+        }
     } else {
         state.watchlist = defaultList.map(code => ({ code, name: '', exchange: 'TSE', prices: [] }));
         saveWatchlistLocal();
@@ -852,7 +860,12 @@ async function initWatchlist() {
     if (nameless.length > 0) {
         await Promise.all(nameless.map(async item => {
             try {
-                const resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=STK`);
+                const secType = item.security_type || 'STK';
+                let resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${secType}`);
+                if (!resp.ok) {
+                    const altType = secType === 'STK' ? 'IND' : 'STK';
+                    resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${altType}`);
+                }
                 if (resp.ok) {
                     const contract = await resp.json();
                     item.name = contract.name || item.code;
