@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 逐一初始化，任一失敗不中斷後續（防止快取版 HTML 缺少元素時全崩）
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
                       initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
-                      initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt, initOrderMgmt,
+                      initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt, initOrderMgmt, initTpsl,
                       initDemoMode]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
@@ -612,6 +612,7 @@ async function fetchData() {
 
     // 交割款預估餘額依賴最新 balance，全部完成後再渲染
     renderSettlements();
+    renderTpsl(); // v1.8 停利停損試算頁同步現價（元素不存在時自動跳過）
 
     // 儲存每日收盤財產總額
     await saveDailyAssetTotal();
@@ -769,7 +770,7 @@ function _tsToTimeStr(ts) {
 }
 
 function _lookupStockName(code) {
-    const pos = (state.positions || []).find(p => p.code === code);
+    const pos = (state.stockPositions || []).find(p => p.code === code);
     if (pos && pos.name) return pos.name;
     const w = (state.watchlist || []).find(x => x.code === code || x === code);
     return (w && w.name) || '';
@@ -829,6 +830,134 @@ function renderPendingOrders(pending) {
     });
 }
 
+
+
+// ── v1.8.0 停利停損試算 ─────────────────────────────────────────────────
+// 庫存：觸發價 = 現價×(1±X%)，損益 = (觸發價−平均成本)×股數（出場時整筆部位總損益）
+// 自選：以假設買價為基準，損益 = 買價×(±X%)×股數。皆未含手續費及交易稅。
+let _tpslCustom = []; // { code, name, price, shares }，localStorage 持久化
+
+function calcTpsl(basePrice, costPrice, shares, pct) {
+    if (!(basePrice > 0) || !(costPrice > 0) || !(shares > 0) || !(pct > 0)) return null;
+    const up = basePrice * (1 + pct / 100);
+    const down = basePrice * (1 - pct / 100);
+    return {
+        up, down,
+        profit: (up - costPrice) * shares,   // 停利出場時的總損益（庫存含既有未實現）
+        loss: (down - costPrice) * shares,   // 停損出場時的總損益
+    };
+}
+
+function getTpslPercent() {
+    const el = document.getElementById('tpsl-percent');
+    const v = el ? parseFloat(el.value) : NaN;
+    return (v > 0 && v <= 100) ? v : null;
+}
+
+function _tpslPnlCell(val) {
+    const cls = val >= 0 ? 'val-up' : 'val-down';
+    return `<td class="mono mask-money ${cls}">${val >= 0 ? '+' : '-'}$${Math.round(Math.abs(val)).toLocaleString('en-US')}</td>`;
+}
+
+function renderTpsl() {
+    const posBody = document.getElementById('tpsl-positions-tbody');
+    const cusBody = document.getElementById('tpsl-custom-tbody');
+    if (!posBody || !cusBody) return;
+    const pct = getTpslPercent();
+
+    // ── 庫存區塊 ──
+    posBody.innerHTML = '';
+    const positions = state.stockPositions || [];
+    document.getElementById('tpsl-positions-empty').style.display = positions.length === 0 ? '' : 'none';
+    positions.forEach(pos => {
+        const shares = state.stockPositionUnit === 'Share' ? pos.quantity : pos.quantity * lotMultiplier(pos);
+        const r = pct ? calcTpsl(pos.last_price, pos.price, shares, pct) : null;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="mono" style="font-weight:600; color: var(--color-accent);">${pos.code}${pos.name ? ` <span style="color:var(--text-muted); font-weight:normal;">${pos.name}</span>` : ''}</td>
+            <td class="mono mask-money">${formatVolume(shares)}</td>
+            <td class="mono mask-money">${formatDecimal(pos.price, 2)}</td>
+            <td class="mono mask-money">${formatDecimal(pos.last_price, 2)}</td>
+            ${r ? `<td class="mono mask-money">${formatDecimal(r.up, 2)}</td>${_tpslPnlCell(r.profit)}<td class="mono mask-money">${formatDecimal(r.down, 2)}</td>${_tpslPnlCell(r.loss)}`
+                : '<td>--</td><td>--</td><td>--</td><td>--</td>'}`;
+        posBody.appendChild(tr);
+    });
+
+    // ── 自選區塊 ──
+    cusBody.innerHTML = '';
+    document.getElementById('tpsl-custom-empty').style.display = _tpslCustom.length === 0 ? '' : 'none';
+    _tpslCustom.forEach((item, idx) => {
+        const r = pct ? calcTpsl(item.price, item.price, item.shares, pct) : null;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="mono" style="font-weight:600; color: var(--color-accent);">${item.code}${item.name ? ` <span style="color:var(--text-muted); font-weight:normal;">${item.name}</span>` : ''}</td>
+            <td class="mono mask-money">${formatVolume(item.shares)}</td>
+            <td class="mono mask-money">${formatDecimal(item.price, 2)}</td>
+            ${r ? `<td class="mono mask-money">${formatDecimal(r.up, 2)}</td>${_tpslPnlCell(r.profit)}<td class="mono mask-money">${formatDecimal(r.down, 2)}</td>${_tpslPnlCell(r.loss)}`
+                : '<td>--</td><td>--</td><td>--</td><td>--</td>'}`;
+        const td = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.className = 'btn-secondary btn-table-action';
+        btn.textContent = '移除';
+        btn.onclick = () => {
+            _tpslCustom.splice(idx, 1);
+            localStorage.setItem('tpslCustom', JSON.stringify(_tpslCustom));
+            renderTpsl();
+        };
+        td.appendChild(btn);
+        tr.appendChild(td);
+        cusBody.appendChild(tr);
+    });
+}
+
+async function addTpslCustom() {
+    const codeEl = document.getElementById('tpsl-add-code');
+    const priceEl = document.getElementById('tpsl-add-price');
+    const sharesEl = document.getElementById('tpsl-add-shares');
+    const code = (codeEl.value || '').trim().toUpperCase();
+    const shares = parseInt(sharesEl.value);
+    if (!code || !/^[0-9A-Z]{1,10}$/.test(code)) { alert('請輸入有效的股票代號。'); return; }
+    if (!(shares > 0)) { alert('請輸入有效的股數。'); return; }
+
+    let price = parseFloat(priceEl.value);
+    let name = '';
+    // 買價留空 → 自動帶參考價（Demo 模式由攔截器供應假價）
+    try {
+        const resp = await smartFetch(`${API_BASE}/data/contracts/${encodeURIComponent(code)}?security_type=STK`);
+        if (resp.ok) {
+            const c = await resp.json();
+            name = c.name || '';
+            if (!(price > 0)) price = Number(c.reference) || 0;
+        }
+    } catch (e) { console.error('查詢參考價失敗', e); }
+    if (!(price > 0)) { alert('查無參考價，請手動輸入假設買價。'); return; }
+
+    _tpslCustom.push({ code, name, price, shares });
+    localStorage.setItem('tpslCustom', JSON.stringify(_tpslCustom));
+    codeEl.value = ''; priceEl.value = '';
+    renderTpsl();
+}
+
+function initTpsl() {
+    const pctEl = document.getElementById('tpsl-percent');
+    if (!pctEl) return;
+    const saved = parseFloat(localStorage.getItem('tpslPercent'));
+    if (saved > 0 && saved <= 100) pctEl.value = saved;
+    pctEl.addEventListener('input', () => {
+        const v = getTpslPercent();
+        if (v) localStorage.setItem('tpslPercent', String(v));
+        renderTpsl();
+    });
+    try {
+        const list = JSON.parse(localStorage.getItem('tpslCustom') || '[]');
+        if (Array.isArray(list)) _tpslCustom = list.filter(x => x && x.code && x.price > 0 && x.shares > 0);
+    } catch (e) { _tpslCustom = []; }
+    document.getElementById('btn-tpsl-add').onclick = addTpslCustom;
+    document.getElementById('tpsl-add-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTpslCustom(); });
+    // 切到本分頁時即重繪（不等下一輪 fetchData）
+    const navItem = document.querySelector('.sidebar-item[data-view="tpsl"]');
+    if (navItem) navItem.addEventListener('click', renderTpsl);
+}
 
 // ── v1.7.1 委託單管理（改價/減量/刪單；經 OpenAPI 確認三端點均以 trade_id 識別） ──
 let _mgmtCtx = null; // { mode: 'price'|'qty'|'cancel', trade }

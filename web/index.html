@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.7.4">
+    <link rel="stylesheet" href="style.css?v=1.8.0">
 </head>
 <body>
     <div class="app-container">
@@ -70,6 +70,16 @@
                             <line x1="12" y1="20" x2="12.01" y2="20"></line>
                         </svg>
                         <span>API 流量狀態</span>
+                    </li>
+                    <li class="sidebar-item" data-view="tpsl">
+                        <!-- Sliders Icon (represents TP/SL Calculator, disguised as system tuner) -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+                            <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+                            <line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line>
+                        </svg>
+                        <span>停利停損</span>
                     </li>
                 </ul>
             </div>
@@ -347,6 +357,55 @@
                             </table>
                         </div>
                         <div class="empty-hint" id="trade-logs-empty">尚無委託紀錄</div>
+                    </div>
+                </section>
+
+                <!-- ── VIEW: TP/SL CALCULATOR (v1.8.0) ── -->
+                <section class="view-section" id="view-tpsl">
+                    <div class="card" style="margin-bottom: 24px;">
+                        <div class="card-header">
+                            <span class="card-title">停利停損試算</span>
+                        </div>
+                        <div class="tpsl-controls">
+                            <span class="form-label">試算幅度 ±</span>
+                            <input type="number" class="form-input mono" id="tpsl-percent" step="0.1" min="0.1" max="100" value="5" style="width: 110px;">
+                            <span class="form-label">%</span>
+                        </div>
+                        <div class="metric-subtitle" style="margin-top: 10px;">
+                            庫存：以「現價 ±X% 為觸發價」對比平均成本，計算整筆部位出場時的總損益。自選：以輸入之假設買價為基準。皆未含手續費及交易稅。
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 24px;">
+                        <div class="card-header"><span class="card-title">庫存部位試算 (自動帶入)</span></div>
+                        <div class="table-scroll">
+                            <table class="data-table" id="tpsl-positions-table">
+                                <thead><tr>
+                                    <th>代號</th><th>股數</th><th>平均成本</th><th>現價</th><th>停利觸發價</th><th>停利時損益</th><th>停損觸發價</th><th>停損時損益</th>
+                                </tr></thead>
+                                <tbody id="tpsl-positions-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="empty-hint" id="tpsl-positions-empty">目前無庫存部位</div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">自選試算 (假設買入，自行新增)</span></div>
+                        <div class="tpsl-add-row">
+                            <div class="form-group"><span class="form-label">股票代號</span><input type="text" class="form-input mono" id="tpsl-add-code" maxlength="10" placeholder="2330" style="width: 110px;"></div>
+                            <div class="form-group"><span class="form-label">假設買價 (留空自動帶參考價)</span><input type="number" class="form-input mono" id="tpsl-add-price" step="0.01" min="0" placeholder="自動" style="width: 150px;"></div>
+                            <div class="form-group"><span class="form-label">股數</span><input type="number" class="form-input mono" id="tpsl-add-shares" step="1" min="1" value="1000" style="width: 110px;"></div>
+                            <button class="btn-primary" id="btn-tpsl-add">新增試算</button>
+                        </div>
+                        <div class="table-scroll">
+                            <table class="data-table" id="tpsl-custom-table">
+                                <thead><tr>
+                                    <th>代號</th><th>股數</th><th>假設買價</th><th>停利觸發價</th><th>停利時獲利</th><th>停損觸發價</th><th>停損時虧損</th><th>操作</th>
+                                </tr></thead>
+                                <tbody id="tpsl-custom-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="empty-hint" id="tpsl-custom-empty">尚未加入自選試算，輸入代號後點「新增試算」</div>
                     </div>
                 </section>
 
@@ -726,7 +785,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.7.4</span>
+                    <span>版本號: v1.8.0</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
