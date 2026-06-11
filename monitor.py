@@ -6,10 +6,19 @@
 """
 
 import os
+import sys
 import time
 import argparse
 from pathlib import Path
 from datetime import datetime
+
+# 解決 Windows 主控台 Unicode 輸出錯誤 (CP950 編碼問題)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 
 def load_env():
@@ -77,10 +86,10 @@ def fetch_and_display(api):
         print_header("現貨帳戶餘額")
         print(f"  餘額：{bal.acc_balance:>12,.0f} TWD")
         if bal.errmsg:
-            print(f"  ⚠ {bal.errmsg}")
+            print(f"  [WARN] {bal.errmsg}")
     except Exception as e:
         print_header("現貨帳戶餘額")
-        print(f"  ⚠ 查詢失敗：{e}")
+        print(f"  [WARN] 查詢失敗：{e}")
 
     # 股票持倉
     try:
@@ -96,7 +105,7 @@ def fetch_and_display(api):
             print_header("股票持倉（含零股，以股為單位）")
             print_stock_positions(odd_positions)
     except Exception as e:
-        print(f"  ⚠ 查詢股票持倉失敗：{e}")
+        print(f"  [WARN] 查詢股票持倉失敗：{e}")
 
     # 期貨保證金與持倉（只在有期貨帳戶時查詢）
     if api.futopt_account:
@@ -110,14 +119,14 @@ def fetch_and_display(api):
             print(f"  風險指標：   {margin.risk_indicator:>12.2f} %")
             print(f"  未沖銷期貨浮動損益：{fmt_pnl(margin.future_open_position):>18}")
         except Exception as e:
-            print(f"  ⚠ 查詢期貨保證金失敗：{e}")
+            print(f"  [WARN] 查詢期貨保證金失敗：{e}")
 
         try:
             fut_pos = api.list_positions(account=api.futopt_account)
             print_header("期貨／選擇權持倉")
             print_future_positions(fut_pos)
         except Exception as e:
-            print(f"  ⚠ 查詢期貨持倉失敗：{e}")
+            print(f"  [WARN] 查詢期貨持倉失敗：{e}")
 
     print(f"\n{'─' * 60}\n")
 
@@ -132,16 +141,16 @@ def main():
 
     import shioaji as sj
 
-    print("🔐 登入永豐 API...")
+    print("[LOGIN] 登入永豐 API...")
     api = sj.Shioaji(simulation=False)
     try:
         api.login(
             api_key=env["API_KEY"],
             secret_key=env["SECRET_KEY"],
         )
-        print("✅ 登入成功")
+        print("[OK] 登入成功")
     except Exception as e:
-        print(f"❌ 登入失敗：{e}")
+        print(f"[ERROR] 登入失敗：{e}")
         return
 
     # 啟用憑證
@@ -153,11 +162,11 @@ def main():
             ca_path=str(ca_path),
             ca_passwd=env["CA_PASSWORD"],
         )
-        print(f"🔑 憑證啟用：{result}")
+        print(f"[CA] 憑證啟用：{result}")
     except Exception as e:
-        print(f"⚠ 憑證啟用失敗：{e}")
+        print(f"[WARN] 憑證啟用失敗：{e}")
 
-    print("⏳ 等待 session 建立...")
+    print("[WAIT] 等待 session 建立...")
     for _ in range(30):
         try:
             api.account_balance()
@@ -165,24 +174,24 @@ def main():
         except Exception:
             time.sleep(1)
     else:
-        print("⚠ Session 建立逾時，繼續嘗試查詢...")
+        print("[WARN] Session 建立逾時，繼續嘗試查詢...")
 
     try:
         if args.interval > 0:
-            print(f"📡 每 {args.interval} 秒刷新一次，按 Ctrl+C 停止\n")
+            print(f"[INFO] 每 {args.interval} 秒刷新一次，按 Ctrl+C 停止\n")
             while True:
                 fetch_and_display(api)
                 time.sleep(args.interval)
         else:
             fetch_and_display(api)
     except KeyboardInterrupt:
-        print("\n⏹ 監控已停止")
+        print("\n[INFO] 監控已停止")
     except Exception as e:
-        print(f"\n❌ 發生錯誤：{e}")
+        print(f"\n[ERROR] 發生錯誤：{e}")
     finally:
         try:
             api.logout()
-            print("👋 已登出")
+            print("[INFO] 已登出")
         except Exception:
             pass
 
@@ -191,5 +200,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"\n❌ 發生錯誤：{e}")
+        print(f"\n[ERROR] 發生錯誤：{e}")
     input("\n按 Enter 關閉...")
