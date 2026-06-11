@@ -2,6 +2,13 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.6.1 (2026-06-11)
+   - [修正] 修正切換至真實模式時，自動清除 Demo 模式殘留的自選股假名稱 (「演示股 XXX」) 並重新查詢真實名稱。
+   - [修正] 優化自選股無名稱項目重新查詢流程，支援 STK/IND 雙重類型 fallback。
+   v1.6.0 (2026-06-11)
+   - [功能] API 憑證多組管理（credentials.json、遮蔽傳輸、切換自動重啟 shioaji + 輪詢遮罩）。
+   - [功能] Demo 演示模式（smartFetch 前端攔截、零實體請求、隨機漫步、下單成交模擬、DEMO 徽章）。
+   - [修正] 修復 shioaji.exe 背景殘留佔用 Port 8080 導致金鑰切換失敗的 Bug。
    v1.5.2 (2026-06-10)
    - [修正] 修正 dashboard.py 中 TWSE 憑證錯誤處理的 _twse_needs_relaxed_ssl_lock 變數未定義 NameError 隱患
    - [修正] 修正 365 天資產歷史清理邏輯以避免手動導入超長歷史時被截斷遺失，改為筆數超過 3000 筆時僅保留最近 3000 筆
