@@ -511,6 +511,9 @@ function startSSE() {
         try {
             const data = JSON.parse(event.data);
             showOrderNotification(data);
+            // v1.7 未成交委託：委託回報事件觸發重拉（debounce 2s，單一資料來源防競態）
+            clearTimeout(_pendingOrdersTimer);
+            _pendingOrdersTimer = setTimeout(fetchPendingOrders, 2000);
         } catch (e) {
             console.error("解析即時回報事件失敗", e);
         }
@@ -598,6 +601,7 @@ async function fetchData() {
         tasks.push(fetchStockPositions(stockAcc));
         tasks.push(fetchSettlements(stockAcc));
         tasks.push(fetchTradeLogs()); // v1.7 委託紀錄（本機端點，併入帳務輪次 ≈ 60s）
+        tasks.push(fetchPendingOrders()); // v1.7 未成交委託（自動先 update status 再回快取）
     }
     // 自選股即時資訊（最需要即時，不再被帳務查詢卡住）
     // v1.5.1：停在美股分頁時暫停台股自選快照（帳務照常），節省 Shioaji API 額度
@@ -744,6 +748,75 @@ async function fetchSettlements(stockAcc) {
         } catch (e) {
             console.error("獲取交割款數據失敗", e);
         }
+}
+
+
+// ── v1.7.0 未成交委託 ────────────────────────────────────────────────────
+const PENDING_STATUSES = new Set(['PreSubmitted', 'PendingSubmit', 'Submitted', 'PartFilled']);
+// 註：Inactive 為無效單、Filled/Cancelled/Failed 為終態，均不列入未成交
+const STATUS_LABELS = {
+    PreSubmitted: '預約送出', PendingSubmit: '傳送中', Submitted: '已送出',
+    PartFilled: '部分成交', Filled: '完全成交', Cancelled: '已取消', Failed: '失敗', Inactive: '無效',
+};
+let _pendingOrdersTimer = null; // SSE debounce
+
+function _tsToTimeStr(ts) {
+    if (!ts) return '--';
+    let ms = Number(ts);
+    if (ms > 1e15) ms = ms / 1e6;        // ns/us 防禦
+    else if (ms < 1e12) ms = ms * 1000;  // 秒 → 毫秒
+    return new Date(ms).toLocaleTimeString('en-GB');
+}
+
+function _lookupStockName(code) {
+    const pos = (state.positions || []).find(p => p.code === code);
+    if (pos && pos.name) return pos.name;
+    const w = (state.watchlist || []).find(x => x.code === code || x === code);
+    return (w && w.name) || '';
+}
+
+async function fetchPendingOrders() {
+    try {
+        const resp = await smartFetch(`${API_BASE}/order/trades`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+        });
+        if (!resp.ok) return; // 失敗保留舊清單，不閃爍
+        const trades = await resp.json();
+        const pending = (Array.isArray(trades) ? trades : [])
+            .filter(t => t && t.status && PENDING_STATUSES.has(t.status.status));
+        renderPendingOrders(pending);
+        const updatedEl = document.getElementById('pending-orders-updated');
+        if (updatedEl) updatedEl.textContent = `更新於 ${new Date().toLocaleTimeString('en-GB')}`;
+    } catch (e) {
+        console.error('獲取未成交委託失敗', e);
+    }
+}
+
+function renderPendingOrders(pending) {
+    const tbody = document.getElementById('pending-orders-tbody');
+    const empty = document.getElementById('pending-orders-empty');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    empty.style.display = pending.length === 0 ? '' : 'none';
+    pending.forEach(t => {
+        const o = t.order || {}, s = t.status || {}, c = t.contract || {};
+        const isBuy = o.action === 'Buy';
+        const price = (s.modified_price > 0 ? s.modified_price : o.price) || 0; // 改價後以新價為準
+        const unit = o.order_lot === 'IntradayOdd' ? '股' : '張';
+        const name = _lookupStockName(c.code);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="mono">${_tsToTimeStr(s.order_ts)}</td>
+            <td class="mono">${c.code || '--'}${name ? ` <span style="color:var(--text-muted)">${name}</span>` : ''}</td>
+            <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
+            <td class="mono mask-money">${formatDecimal(price, 2)}</td>
+            <td class="mono mask-money">${formatVolume(s.order_quantity ?? o.quantity)} ${unit}</td>
+            <td class="mono mask-money">${formatVolume(s.deal_quantity || 0)}</td>
+            <td style="color:${s.status === 'PartFilled' ? 'var(--color-accent)' : 'var(--text-secondary)'}">${STATUS_LABELS[s.status] || s.status}</td>`;
+        tbody.appendChild(tr);
+    });
 }
 
 // ── v1.7.0 委託紀錄（最新 30 筆委託成功送出，非成交回報） ────────────────
@@ -3500,6 +3573,7 @@ const demoState = {
     demoKbars: {},     // code -> Close 陣列
     orderSeq: 1,
     tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 30）
+    pendingOrders: [], // v1.7 假未成交委託（與真實 /order/trades 回傳同構）
 };
 
 function mockResponse(data, status = 200) {
@@ -3798,6 +3872,13 @@ function demoPlaceOrder(bodyText) {
     });
     demoState.tradeLogs = demoState.tradeLogs.slice(0, 30);
 
+    // v1.7 假未成交委託（成交回呼時移除）
+    demoState.pendingOrders.push({
+        contract: { code, exchange: 'TSE', security_type: 'STK' },
+        order: { id: orderId, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common' },
+        status: { id: orderId, status: 'Submitted', order_quantity: so.quantity, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, order_ts: Date.now() / 1000 },
+    });
+
     // 1~2 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環
     setTimeout(() => {
         if (!state.demoMode) return; // 期間若已關閉 Demo，放棄模擬成交
@@ -3818,6 +3899,8 @@ function demoPlaceOrder(bodyText) {
                 demoState.positions = demoState.positions.filter(p => p.code !== code);
             }
         }
+
+        demoState.pendingOrders = demoState.pendingOrders.filter(t => t.order.id !== orderId); // v1.7 成交後移除假未成交
         showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${formatDecimal(price, 2)}`);
         _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
         fetchData();
@@ -3857,7 +3940,8 @@ async function smartFetch(url, options = {}) {
             try { code = JSON.parse(body || '{}').contract.code; } catch (e) { /* 忽略 */ }
             return mockResponse(demoTicks(code));
         }
-        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
+
+        if (url.includes('/order/trades')) return mockResponse(demoState.pendingOrders); // v1.7 假未成交委託        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
         console.warn(`[DEMO] 未攔截的 proxy 端點（回傳空物件防洩漏）: ${method} ${url}`);
         return mockResponse({});
     }

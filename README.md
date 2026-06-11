@@ -17,11 +17,12 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**（目前 `v1.6.2`）：`index.html` footer + 本 README 版本紀錄。
+* 任何程式修改**必須同步更新版本號**（目前 `v1.7.0`）：`index.html` footer + 本 README 版本紀錄。
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 版本紀錄
 
+* **v1.7.0**（2026-06-11）：未成交委託區塊（`POST /order/trades` 端點自動先刷新狀態再回快取〔經 OpenAPI 規格確認〕、過濾 PreSubmitted/PendingSubmit/Submitted/PartFilled、SSE 委託回報 debounce 2s 觸發重拉、改價後以 modified_price 顯示）＋ 委託紀錄最新 30 筆（後端 place_order 成功攔截寫入 `trade_logs.json`、lock + 原子寫入 + 損壞自復原、`/api/trade-logs` 端點）＋ 下單面板/確認 Modal 預估交易金額即時試算（未含費用、市價單參考提示）；三者均含 Demo 模式假資料閉環與卡片自訂顯示。
 * **v1.6.2**（2026-06-11）：優化數值顯示（前端所有數值包含自選股、歷史走勢、庫存部位等均加入千分位分隔號，提升閱讀清晰度與舒適度）。
 * **v1.6.1**（2026-06-11）：修復與收尾（修復殘留 `shioaji.exe` 佔用 Port 8080 造成切換金鑰失效 Bug；修復切換至真實模式時，自選股清單自動清除 Demo 模式所遺留下之「演示股」快取名稱，並新增 STK/IND 雙重類型 fallback 重新向後端查詢真實名稱；擴充 Demo 模式字典避免 placeholder）。
 * **v1.6.0**（2026-06-11）：API 金鑰多組管理（`credentials.json`、遮蔽傳輸、二次安全驗證、切換自動重啟 shioaji + 30s 輪詢遮罩、刪除保護、`.env` 合併寫入、設定 API 不依賴 Shioaji 防鎖死）＋ Demo 演示模式（`smartFetch` 前端攔截、零實體請求可離線、隨機漫步行情、資產趨勢終值校準＝假餘額+假市值、下單閉環模擬賣出限庫存、DEMO 徽章、關閉需安全驗證）。
