@@ -18,7 +18,7 @@
 ## 開發守則
 
 * 任何程式修改**必須同步更新版本號**（目前 `v1.6.0`）：`index.html` footer + 本 README 版本紀錄。
-* 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、代碼評審 `code_review.md`、任務清單 `task.md`、v1.6 規格 `prd.md`/`sa.md`。
+* 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 版本紀錄
 
