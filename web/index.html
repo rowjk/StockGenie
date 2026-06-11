@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.5.2">
+    <link rel="stylesheet" href="style.css?v=1.6.0">
 </head>
 <body>
     <div class="app-container">
@@ -98,6 +98,7 @@
                         <span class="status-dot" id="server-status-dot"></span>
                         <span id="server-status-text">伺服器已離線</span>
                     </div>
+                    <span class="demo-badge" id="demo-badge" style="display: none;" title="Demo 演示模式啟用中：畫面為高擬真假數據，未連接真實帳戶">DEMO</span>
                     <div class="idle-countdown" id="idle-countdown" title="閒置逾時倒數">
                         ⏱ <span id="idle-countdown-text">30:00</span>
                     </div>
@@ -554,6 +555,14 @@
                                     </select>
                                 </div>
                                 <div class="form-group">
+                                    <span class="form-label">Demo 演示模式</span>
+                                    <p class="metric-subtitle">啟用後以高擬真假數據展示介面（含波動行情與模擬下單），不發送任何實體 API 請求，可完全離線演示。關閉需通過安全驗證。</p>
+                                    <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; cursor: pointer; user-select: none;">
+                                        <input type="checkbox" id="demo-mode-toggle" style="width: 15px; height: 15px; cursor: pointer;">
+                                        <span style="font-size: 0.9rem;">啟用 Demo 演示模式</span>
+                                    </label>
+                                </div>
+                                <div class="form-group">
                                     <span class="form-label">資訊總覽卡片顯示設定</span>
                                     <p class="metric-subtitle">勾選欲顯示於資訊總覽的卡片，設定即時生效並自動儲存於瀏覽器。</p>
                                     <div class="card-config-grid" id="card-config-form">
@@ -617,12 +626,71 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- ── API 憑證多組管理 (v1.6.0) ── -->
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <span class="card-title">API 憑證管理（多組金鑰切換）</span>
+                            <span class="metric-subtitle" id="credentials-status">--</span>
+                        </div>
+                        <p class="metric-subtitle">維護多組永豐 API 金鑰與 CA 憑證設定。切換或變更啟用中設定後，將自動以新金鑰重啟交易伺服器。金鑰一律以遮蔽格式顯示，明文不會傳送至瀏覽器。</p>
+                        <div class="settings-table-container">
+                            <table class="data-table" id="credentials-table">
+                                <thead>
+                                    <tr>
+                                        <th>狀態</th>
+                                        <th>名稱</th>
+                                        <th>API Key</th>
+                                        <th>CA 憑證</th>
+                                        <th>管理操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">正在讀取設定檔...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="margin-top: 12px;">
+                            <button class="btn-secondary" id="btn-add-credential">＋ 新增設定檔</button>
+                        </div>
+
+                        <!-- 新增/編輯表單（預設隱藏） -->
+                        <div id="credential-form-wrap" style="display: none; margin-top: 16px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+                            <span class="form-label" id="credential-form-title" style="font-size: 0.95rem;">新增設定檔</span>
+                            <div style="display: flex; flex-direction: column; gap: 14px; margin-top: 12px;">
+                                <div class="form-group">
+                                    <span class="form-label">設定名稱（必填）</span>
+                                    <input type="text" class="form-input" id="cred-name" placeholder="例如：主帳戶、備用唯讀帳戶" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label">API Key</span>
+                                    <input type="text" class="form-input mono" id="cred-api-key" placeholder="編輯時留空或維持遮蔽則不變更" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label">Secret Key</span>
+                                    <input type="text" class="form-input mono" id="cred-secret-key" placeholder="編輯時留空或維持遮蔽則不變更" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label">CA 憑證絕對路徑</span>
+                                    <input type="text" class="form-input mono" id="cred-ca-path" placeholder="例如 C:/憑證/Sinopac.pfx（選填，留空僅供行情查詢）" autocomplete="off">
+                                </div>
+                                <div class="form-group">
+                                    <span class="form-label">CA 憑證密碼</span>
+                                    <input type="password" class="form-input mono" id="cred-ca-password" placeholder="編輯時留空或維持遮蔽則不變更" autocomplete="new-password">
+                                </div>
+                                <div style="display: flex; gap: 10px;">
+                                    <button class="btn-primary" id="btn-cred-save">儲存設定</button>
+                                    <button class="btn-secondary" id="btn-cred-cancel">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </section>
                 
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.5.2</span>
+                    <span>版本號: v1.6.0</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
@@ -795,6 +863,46 @@
         </div>
     </div>
 
-    <script src="app.js?v=1.4.6"></script>
+    <!-- ── Credentials Change Verification Modal (v1.6.0) ── -->
+    <div class="modal-overlay" id="credentials-lock-modal-overlay">
+        <div class="modal" id="credentials-lock-modal">
+            <div class="modal-header">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>變更設定安全驗證</span>
+            </div>
+            <div class="modal-content">
+                <p style="margin-bottom: 16px; color: var(--text-secondary); font-size: 0.95rem;">
+                    此為敏感操作，執行前請回答以下安全驗證問題：
+                </p>
+                <div class="form-group">
+                    <select class="form-select font-mono" id="credentials-lock-select" style="font-family: var(--font-mono);">
+                        <option value="">-- 請選擇正確答案 --</option>
+                    </select>
+                </div>
+                <div id="credentials-lock-error" style="color: var(--color-down); font-size: 0.85rem; margin-top: 10px; display: none;">
+                    ❌ 驗證失敗，請選擇正確答案！
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btn-credentials-lock-cancel">取消</button>
+                <button class="btn-primary" id="btn-credentials-lock-submit">確認執行</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Server Restart Blocking Overlay (v1.6.0) ── -->
+    <div class="server-restart-overlay" id="server-restart-overlay">
+        <div class="restart-box">
+            <div class="restart-spinner"></div>
+            <h3 id="restart-title" style="font-weight: 500;">交易伺服器重啟中...</h3>
+            <p class="metric-subtitle" id="restart-msg">正在以新的 API 憑證重新啟動 Shioaji 伺服器，請稍候（最長 30 秒）。</p>
+            <button class="btn-secondary" id="btn-restart-force-unlock" style="display: none;">強制解鎖返回</button>
+        </div>
+    </div>
+
+    <script src="app.js?v=1.6.0"></script>
 </body>
 </html>
