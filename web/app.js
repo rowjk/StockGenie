@@ -812,7 +812,7 @@ function renderPendingOrders(pending) {
             <td class="mono">${c.code || '--'}${name ? ` <span style="color:var(--text-muted)">${name}</span>` : ''}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
             <td class="mono mask-money">${formatDecimal(price, 2)}</td>
-            <td class="mono mask-money">${formatVolume(s.order_quantity ?? o.quantity)} ${unit}</td>
+            <td class="mono mask-money">${formatVolume(s.order_quantity || o.quantity)} ${unit}</td>
             <td class="mono mask-money">${formatVolume(s.deal_quantity || 0)}</td>
             <td style="color:${s.status === 'PartFilled' ? 'var(--color-accent)' : 'var(--text-secondary)'}">${STATUS_LABELS[s.status] || s.status}</td>`;
         tbody.appendChild(tr);
