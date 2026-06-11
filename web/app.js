@@ -2,6 +2,8 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.6.2 (2026-06-11)
+   - [優化] 前端所有數值（包含自選股、歷史走勢、庫存部位等）均加入千分位分隔號，提升閱讀清晰度。
    v1.6.1 (2026-06-11)
    - [修正] 修正切換至真實模式時，自動清除 Demo 模式殘留的自選股假名稱 (「演示股 XXX」) 並重新查詢真實名稱。
    - [修正] 優化自選股無名稱項目重新查詢流程，支援 STK/IND 雙重類型 fallback。
@@ -395,9 +397,9 @@ async function checkServerStatus() {
 }
 
 function updateUsageUI(usage) {
-    document.getElementById('api-connections').textContent = usage.connections;
-    const mbUsed = (usage.bytes / 1024 / 1024).toFixed(2);
-    const mbLimit = (usage.limit_bytes / 1024 / 1024).toFixed(0);
+    document.getElementById('api-connections').textContent = formatVolume(usage.connections);
+    const mbUsed = formatDecimal(usage.bytes / 1024 / 1024, 2);
+    const mbLimit = formatDecimal(usage.limit_bytes / 1024 / 1024, 0);
     
     document.getElementById('api-bytes-val').textContent = `${mbUsed} MB`;
     document.getElementById('api-bytes-summary').textContent = `已用流量: ${mbUsed} MB / 每日上限: ${mbLimit} MB`;
@@ -759,7 +761,7 @@ function renderStockPositions() {
         const pnl = pos.pnl || 0;
         const pnlClass = pnl >= 0 ? 'val-up' : 'val-down';
         const pnlRateVal = pos.pnl_rate !== undefined ? pos.pnl_rate : (pos.price > 0 ? ((pos.last_price - pos.price) / pos.price) * 100 : 0);
-        const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${pnlRateVal.toFixed(2)}%`;
+        const pnlPct = `${pnlRateVal >= 0 ? '+' : ''}${formatDecimal(pnlRateVal, 2)}%`;
         const dirStr = (pos.direction === 'Buy' || pos.direction === 'B') ? '買進' : '賣出';
         // unit=Share 時 quantity 已是股數（含零股）；Lot 時需 ×1000
         const qtyShares = state.stockPositionUnit === 'Share'
@@ -772,8 +774,8 @@ function renderStockPositions() {
             <td>${pos.name || '證券'}</td>
             <td>${dirStr}</td>
             <td class="mono">${qtyStr}</td>
-            <td class="mono">${pos.price.toFixed(2)}</td>
-            <td class="mono">${pos.last_price.toFixed(2)}</td>
+            <td class="mono">${formatDecimal(pos.price, 2)}</td>
+            <td class="mono">${formatDecimal(pos.last_price, 2)}</td>
             <td class="mono ${pnlClass}">${formatCurrency(pnl)}</td>
             <td class="mono ${pnlClass}">${pnlPct}</td>
         `;
@@ -1067,13 +1069,13 @@ function renderWatchlist() {
         }
         div.onclick = () => selectWatchlistItem(item.code);
         
-        const priceStr = item.close ? item.close.toFixed(2) : '--';
+        const priceStr = item.close ? formatDecimal(item.close, 2) : '--';
         const rateVal = item.change_rate || 0;
         
         // 指數與個股統一顯示「漲跌點數 (漲跌百分比)」雙格式
         const diffVal = item.change_price ?? (item.close && item.reference ? item.close - item.reference : null);
-        const diffStr = diffVal != null ? `${diffVal >= 0 ? '+' : ''}${diffVal.toFixed(2)}` : '--';
-        const ratePctStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${rateVal.toFixed(2)}%` : '--';
+        const diffStr = diffVal != null ? `${diffVal >= 0 ? '+' : ''}${formatDecimal(diffVal, 2)}` : '--';
+        const ratePctStr = item.change_rate ? `${rateVal >= 0 ? '+' : ''}${formatDecimal(rateVal, 2)}%` : '--';
         const rateStr = `${diffStr} (${ratePctStr})`;
         const rateClass = rateVal > 0 ? 'badge-up' : (rateVal < 0 ? 'badge-down' : 'metric-subtitle');
         
@@ -1247,17 +1249,17 @@ function updateDetailView(code) {
     
     document.getElementById('detail-code').textContent = item.code;
     document.getElementById('detail-name').textContent = item.name || '自選股';
-    document.getElementById('detail-ref').textContent = item.reference || '--';
-    document.getElementById('detail-open').textContent = item.open || '--';
-    document.getElementById('detail-high').textContent = item.high || '--';
-    document.getElementById('detail-low').textContent = item.low || '--';
+    document.getElementById('detail-ref').textContent = formatDecimal(item.reference, 2);
+    document.getElementById('detail-open').textContent = formatDecimal(item.open, 2);
+    document.getElementById('detail-high').textContent = formatDecimal(item.high, 2);
+    document.getElementById('detail-low').textContent = formatDecimal(item.low, 2);
     
     const closeEl = document.getElementById('detail-close');
-    closeEl.textContent = item.close || '--';
+    closeEl.textContent = formatDecimal(item.close, 2);
     const rateVal = item.change_rate || 0;
     closeEl.className = rateVal > 0 ? 'val-up' : (rateVal < 0 ? 'val-down' : '');
     
-    document.getElementById('detail-volume').textContent = item.total_volume || '--';
+    document.getElementById('detail-volume').textContent = formatVolume(item.total_volume);
 
     // 更新盤中委買委賣多空力道對比條
     updateStrengthBar(item);
@@ -1330,7 +1332,7 @@ async function loadMAStats(code) {
             if (!el) return;
             if (closes.length < period) { el.textContent = '--'; return; }
             const ma = closes.slice(-period).reduce((a, b) => a + b, 0) / period;
-            el.textContent = ma.toFixed(2);
+            el.textContent = formatDecimal(ma, 2);
         });
     } catch (e) {
         console.warn('loadMAStats 失敗', e);
@@ -1510,8 +1512,8 @@ async function renderDetailMAChart(code) {
         ctx.font = '10px var(--font-mono)';
         ctx.fillStyle = theme === 'dark' ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.8)';
         ctx.textAlign = 'right';
-        ctx.fillText(`高 ${Math.max(...closes).toFixed(2)}`, w - 5, 14);
-        ctx.fillText(`低 ${Math.min(...closes).toFixed(2)}`, w - 5, h - 6);
+        ctx.fillText(`高 ${formatDecimal(Math.max(...closes), 2)}`, w - 5, 14);
+        ctx.fillText(`低 ${formatDecimal(Math.min(...closes), 2)}`, w - 5, h - 6);
 
         // 圖例
         legendEl.innerHTML = MA_DEFS.map(d =>
@@ -1524,7 +1526,7 @@ async function renderDetailMAChart(code) {
             const el = document.getElementById(maIdMap[ma.period]);
             if (!el) return;
             const latest = [...ma.values].reverse().find(v => v !== null);
-            el.textContent = latest !== undefined ? latest.toFixed(2) : '--';
+            el.textContent = latest !== undefined ? formatDecimal(latest, 2) : '--';
         });
 
     } catch (e) {
@@ -1593,8 +1595,8 @@ async function initDrawerControls() {
         document.getElementById('conf-lot').textContent = orderLotText;
         document.getElementById('conf-cond').textContent = orderCondText;
         document.getElementById('conf-price-type').textContent = priceType === 'LMT' ? '限價 (LMT)' : '市價 (MKT)';
-        document.getElementById('conf-price').textContent = `${price.toFixed(2)} 元`;
-        document.getElementById('conf-qty').textContent = `${qty} ${lotType === 'Common' ? '張' : '股'}`;
+        document.getElementById('conf-price').textContent = `${formatDecimal(price, 2)} 元`;
+        document.getElementById('conf-qty').textContent = `${formatVolume(qty)} ${lotType === 'Common' ? '張' : '股'}`;
         
         // 顯示 Modal 遮罩與本體
         confirmOverlay.classList.add('active');
@@ -2307,7 +2309,7 @@ function renderDividends(list) {
         const div = document.createElement('div');
         div.className = 'dividend-item';
         const amount = d.cash_dividend != null
-            ? `${d.cash_dividend.toFixed(2)} 元/股`
+            ? `${formatDecimal(d.cash_dividend, 2)} 元/股`
             : (d.stock_dividend_ratio ? `配股率 ${d.stock_dividend_ratio}` : '尚未公告');
         div.innerHTML = `
             <span><span class="div-date">${d.date}</span>　<span class="mono">${d.code}</span> ${escapeHtml(d.name || '')}</span>
@@ -2576,6 +2578,20 @@ function formatCurrency(val) {
     return Number(val).toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 
+function formatDecimal(val, decimals = 2) {
+    if (val === null || val === undefined || isNaN(Number(val))) return '--';
+    return Number(val).toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+function formatVolume(val) {
+    if (val === null || val === undefined || isNaN(Number(val))) return '--';
+    return Number(val).toLocaleString('en-US');
+}
+
+
 // ── 美股自選監控（Yahoo Finance 經 dashboard.py 代理）────────────────────
 // 資料路徑：前端 → /api/us-chart（代碼格式驗證 + 後端快取）→ Yahoo Finance
 const US_DEFAULT_ITEMS = [
@@ -2793,11 +2809,11 @@ function renderUsList() {
         div.className = isIndex ? 'watchlist-item watchlist-item-index' : 'watchlist-item';
         div.onclick = () => selectUsItem(item.symbol);
 
-        const priceStr = q && q.price != null ? q.price.toFixed(2) : '--';
+        const priceStr = q && q.price != null ? formatDecimal(q.price, 2) : '--';
         const chg = q && q.change != null ? q.change : 0;
-        const ratePctStr = q && q.change_rate != null ? `${q.change_rate >= 0 ? '+' : ''}${q.change_rate.toFixed(2)}%` : '--';
+        const ratePctStr = q && q.change_rate != null ? `${q.change_rate >= 0 ? '+' : ''}${formatDecimal(q.change_rate, 2)}%` : '--';
         // 與台股一致：指數與個股統一顯示「漲跌點數 (漲跌百分比)」雙格式
-        const diffStr = q && q.change != null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}` : '--';
+        const diffStr = q && q.change != null ? `${chg >= 0 ? '+' : ''}${formatDecimal(chg, 2)}` : '--';
         const rateStr = `${diffStr} (${ratePctStr})`;
         const rateClass = chg > 0 ? 'badge-up' : (chg < 0 ? 'badge-down' : 'metric-subtitle');
 
@@ -2866,17 +2882,17 @@ function updateUsDetailFields(symbol) {
     const removeBtn = document.getElementById('btn-remove-us');
     removeBtn.style.display = 'block';
     removeBtn.onclick = () => removeUsItem(symbol);
-    document.getElementById('us-detail-ref').textContent = q.prev_close != null ? q.prev_close.toFixed(2) : '--';
+    document.getElementById('us-detail-ref').textContent = formatDecimal(q.prev_close, 2);
 
     const opens = (q.open || []).filter(v => v != null);
     const highs = (q.high || []).filter(v => v != null);
     const lows  = (q.low  || []).filter(v => v != null);
-    document.getElementById('us-detail-open').textContent = opens.length ? opens[0].toFixed(2) : '--';
-    document.getElementById('us-detail-high').textContent = highs.length ? Math.max(...highs).toFixed(2) : '--';
-    document.getElementById('us-detail-low').textContent  = lows.length  ? Math.min(...lows).toFixed(2)  : '--';
+    document.getElementById('us-detail-open').textContent = opens.length ? formatDecimal(opens[0], 2) : '--';
+    document.getElementById('us-detail-high').textContent = highs.length ? formatDecimal(Math.max(...highs), 2) : '--';
+    document.getElementById('us-detail-low').textContent  = lows.length  ? formatDecimal(Math.min(...lows), 2)  : '--';
 
     const closeEl = document.getElementById('us-detail-close');
-    closeEl.textContent = q.price != null ? q.price.toFixed(2) : '--';
+    closeEl.textContent = formatDecimal(q.price, 2);
     const rateVal = q.change_rate || 0;
     closeEl.className = rateVal > 0 ? 'val-up' : (rateVal < 0 ? 'val-down' : '');
 
@@ -2907,7 +2923,7 @@ async function loadUsMAStats(symbol) {
             if (!el) return;
             if (closes.length < period) { el.textContent = '--'; return; }
             const ma = closes.slice(-period).reduce((a, b) => a + b, 0) / period;
-            el.textContent = ma.toFixed(2);
+            el.textContent = formatDecimal(ma, 2);
         });
     } catch (e) {
         console.warn('[美股] loadUsMAStats 失敗', e);
@@ -3060,8 +3076,8 @@ async function renderUsMAChart(symbol) {
         ctx.font = '10px var(--font-mono)';
         ctx.fillStyle = theme === 'dark' ? 'rgba(148,163,184,0.7)' : 'rgba(100,116,139,0.8)';
         ctx.textAlign = 'right';
-        ctx.fillText(`高 ${Math.max(...closes).toFixed(2)}`, w - 5, 14);
-        ctx.fillText(`低 ${Math.min(...closes).toFixed(2)}`, w - 5, h - 6);
+        ctx.fillText(`高 ${formatDecimal(Math.max(...closes), 2)}`, w - 5, 14);
+        ctx.fillText(`低 ${formatDecimal(Math.min(...closes), 2)}`, w - 5, h - 6);
 
         // 圖例
         legendEl.innerHTML = MA_DEFS.map(d =>
@@ -3074,7 +3090,7 @@ async function renderUsMAChart(symbol) {
             const el = document.getElementById(maIdMap[ma.period]);
             if (!el) return;
             const latest = [...ma.values].reverse().find(v => v !== null);
-            el.textContent = latest !== undefined && latest !== null ? latest.toFixed(2) : '--';
+            el.textContent = latest !== undefined && latest !== null ? formatDecimal(latest, 2) : '--';
         });
 
     } catch (e) {
@@ -3722,7 +3738,7 @@ function demoPlaceOrder(bodyText) {
                 demoState.positions = demoState.positions.filter(p => p.code !== code);
             }
         }
-        showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${price.toFixed(2)}`);
+        showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${formatDecimal(price, 2)}`);
         _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
         fetchData();
     }, 1000 + Math.random() * 1000);
