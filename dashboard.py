@@ -36,7 +36,7 @@ shioaji_proc_lock = threading.Lock()
 
 # ── v1.7.0 委託紀錄（記錄「委託成功送出」，非成交；含真實交易資料，勿入版控）──
 TRADE_LOG_FILE = WORKSPACE_DIR / "trade_logs.json"
-TRADE_LOG_MAX = 30
+TRADE_LOG_MAX = 99
 trade_log_lock = threading.Lock()
 
 

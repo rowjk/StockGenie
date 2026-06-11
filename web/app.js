@@ -3702,7 +3702,7 @@ const demoState = {
     historyShape: null,
     demoKbars: {},     // code -> Close 陣列
     orderSeq: 1,
-    tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 30）
+    tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 99）
     pendingOrders: [], // v1.7 假未成交委託（與真實 /order/trades 回傳同構）
     cancelledIds: new Set(), // v1.7.1 已刪單號（模擬成交 timer 據此放棄成交）
 };
@@ -3984,7 +3984,7 @@ function _demoMgmtLog(t, type, price, quantity, detail) {
         order_lot: t.order.order_lot,
         detail,
     });
-    demoState.tradeLogs = demoState.tradeLogs.slice(0, 30);
+    demoState.tradeLogs = demoState.tradeLogs.slice(0, 99);
 }
 
 function demoCancelOrder(bodyText) {
@@ -4063,7 +4063,7 @@ function demoPlaceOrder(bodyText) {
         quantity: so.quantity,
         order_lot: so.order_lot || 'Common',
     });
-    demoState.tradeLogs = demoState.tradeLogs.slice(0, 30);
+    demoState.tradeLogs = demoState.tradeLogs.slice(0, 99);
 
     // v1.7 假未成交委託（成交回呼時移除）
     demoState.pendingOrders.push({
