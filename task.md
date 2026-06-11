@@ -1,4 +1,24 @@
-# StockGenie - 任務清單（全數完成）
+# StockGenie - 任務清單
+
+## 待辦（後續優化）
+
+* **Demo 模式無法操作 v1.7.x／v1.8.0 新功能**（2026-06-11 使用者實測回報）：
+  未成交委託的改價/減量/刪單、停利停損試算等今日新增功能，在 Demo 模式下無法操作。
+  攔截器與假資料閉環已寫好且 Node 斷言通過（demoPlaceOrder→pendingOrders、demoCancelOrder/demoUpdateOrder、
+  contracts 假參考價），但實際 UI 操作不通——待重現排查。可能方向：
+  (a) Demo 下單後 1~2 秒即模擬成交，pendingOrders 存活時間太短，幾乎來不及點操作鈕（可考慮 Demo 成交延遲拉長或改手動觸發）；
+  (b) renderTpsl/renderPendingOrders 在 Demo 的資料鏈路（state.stockPositions 由 demoPositions 供應）某環節未刷新；
+  (c) tradingPermitted 或其他 guard 在 Demo 初始化順序下未就緒。
+  排查時先開 Demo 開 DevTools Console 看 [DEMO] 警告與錯誤。
+
+## 盤中待驗證（2026-06-12 開盤）
+
+* 減量實測：委託量欄變有效量、紀錄出現「減量 -N」、與券商 App 對照剩餘量（驗證 update_qty 數量=減少數的語意推定）。
+* 預約單開盤自動轉「已送出」；成交後未成交清單自動移除。
+* 部分成交時「已成交」欄與狀態顯示（可遇不可求）。
+* 零股預估金額（×1）；停利停損頁現價盤中更新（~60s）。
+
+# 歷程（全數完成）
 
 各版本開發任務皆已完成驗收，詳細變更見 README 版本紀錄。本檔僅保留歷程摘要：
 
