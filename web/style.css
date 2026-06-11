@@ -1555,3 +1555,18 @@ body.boss-mode .mask-block::after {
     top: 0;
     z-index: 1; /* 捲動時表頭固定（背景沿用 .data-table th 的 --bg-tertiary） */
 }
+
+/* ── v1.8.0 停利停損試算 ─────────────────────────────────────────────── */
+.tpsl-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tpsl-add-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
