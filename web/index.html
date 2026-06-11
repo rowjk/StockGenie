@@ -314,6 +314,23 @@
                             <div class="metric-subtitle">正在載入重大訊息...</div>
                         </div>
                     </div>
+
+                    <!-- v1.7.0 委託紀錄 (最新 30 筆委託成功送出，非成交) -->
+                    <div class="card" data-card-key="tradelogs" style="margin-top: 24px;">
+                        <div class="card-header">
+                            <span class="card-title">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                                委託紀錄 (最新 30 筆送出成功之委託，非成交回報)
+                            </span>
+                        </div>
+                        <table class="data-table" id="trade-logs-table">
+                            <thead><tr>
+                                <th>時間</th><th>買賣</th><th>代號</th><th>價格</th><th>數量</th><th>單號</th>
+                            </tr></thead>
+                            <tbody id="trade-logs-tbody"></tbody>
+                        </table>
+                        <div class="empty-hint" id="trade-logs-empty">尚無委託紀錄</div>
+                    </div>
                 </section>
 
                 <!-- ── VIEW 2: POSITIONS ── -->
@@ -575,6 +592,7 @@
                                         <label><input type="checkbox" data-card-key="pnl" checked> 已實現月度損益</label>
                                         <label><input type="checkbox" data-card-key="announcements" checked> 重大訊息日誌</label>
                                         <label><input type="checkbox" data-card-key="dividends" checked> 除權息行事曆</label>
+                                        <label><input type="checkbox" data-card-key="tradelogs" checked> 委託紀錄</label>
                                     </div>
                                 </div>
                                 <div class="form-group">
@@ -766,6 +784,12 @@
                 <input type="number" step="1" min="1" class="form-input mono" id="order-qty" value="1">
                 <span class="metric-subtitle">請依據上方選定的「交易單位」輸入張數或股數。</span>
             </div>
+
+            <div class="order-est-row">
+                <span class="form-label">預估交易金額</span>
+                <span class="mono mask-money" id="order-est-amount">--</span>
+                <span class="est-hint" id="order-est-hint">未含手續費及交易稅</span>
+            </div>
         </div>
         <div class="drawer-footer">
             <button class="btn-secondary" id="btn-drawer-cancel">取消</button>
@@ -794,6 +818,7 @@
                     <div class="confirm-item"><span class="confirm-label">價格類型</span><span class="confirm-value" id="conf-price-type">--</span></div>
                     <div class="confirm-item"><span class="confirm-label">委託價格</span><span class="confirm-value mono val-up" id="conf-price">-- 元</span></div>
                     <div class="confirm-item"><span class="confirm-label">委託數量</span><span class="confirm-value mono" id="conf-qty">--</span></div>
+                    <div class="confirm-item"><span class="confirm-label">預估金額 (未含費用)</span><span class="confirm-value mono mask-money" id="conf-est-amount">--</span></div>
                 </div>
             </div>
             <div class="modal-footer">

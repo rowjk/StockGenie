@@ -588,6 +588,7 @@ async function fetchData() {
         if (isTradingHours()) tasks.push(fetchTradingLimits(stockAcc));
         tasks.push(fetchStockPositions(stockAcc));
         tasks.push(fetchSettlements(stockAcc));
+        tasks.push(fetchTradeLogs()); // v1.7 委託紀錄（本機端點，併入帳務輪次 ≈ 60s）
     }
     // 自選股即時資訊（最需要即時，不再被帳務查詢卡住）
     // v1.5.1：停在美股分頁時暫停台股自選快照（帳務照常），節省 Shioaji API 額度
@@ -734,6 +735,39 @@ async function fetchSettlements(stockAcc) {
         } catch (e) {
             console.error("獲取交割款數據失敗", e);
         }
+}
+
+// ── v1.7.0 委託紀錄（最新 30 筆委託成功送出，非成交回報） ────────────────
+async function fetchTradeLogs() {
+    try {
+        const resp = await smartFetch(`${LOCAL_API_BASE}/trade-logs`);
+        if (!resp.ok) return; // 失敗保留舊清單，不閃爍
+        renderTradeLogs(await resp.json());
+    } catch (e) {
+        console.error("獲取委託紀錄失敗", e);
+    }
+}
+
+function renderTradeLogs(logs) {
+    const tbody = document.getElementById('trade-logs-tbody');
+    const empty = document.getElementById('trade-logs-empty');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const list = Array.isArray(logs) ? logs : [];
+    empty.style.display = list.length === 0 ? '' : 'none';
+    list.forEach(log => {
+        const isBuy = log.action === 'Buy';
+        const unit = log.order_lot === 'IntradayOdd' ? '股' : '張';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="mono">${log.ts || '--'}</td>
+            <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
+            <td class="mono">${log.code || '--'}</td>
+            <td class="mono mask-money">${Number(log.price || 0).toFixed(2)}</td>
+            <td class="mono mask-money">${log.quantity} ${unit}</td>
+            <td class="mono">${log.order_id || '--'}</td>`;
+        tbody.appendChild(tr);
+    });
 }
 
 function renderStockPositions() {
@@ -1513,6 +1547,30 @@ async function renderDetailMAChart(code) {
     }
 }
 
+// ── 下單預估金額試算（v1.7：純前端，未含手續費及交易稅） ────────────────
+function calcOrderAmount(price, qty, lotType) {
+    if (isNaN(price) || isNaN(qty) || price <= 0 || qty <= 0) return null;
+    // 整張 = 價格 × 張數 × 1000；零股 = 價格 × 股數（依 task.md 既有單位規則）
+    return price * qty * (lotType === 'Common' ? 1000 : 1);
+}
+
+function formatOrderAmount(amount) {
+    return amount === null ? '--' : `$${Math.round(amount).toLocaleString()}`;
+}
+
+function updateOrderEstimate() {
+    const amount = calcOrderAmount(
+        parseFloat(document.getElementById('order-price').value),
+        parseInt(document.getElementById('order-qty').value),
+        document.getElementById('order-lot').value
+    );
+    document.getElementById('order-est-amount').textContent = formatOrderAmount(amount);
+    document.getElementById('order-est-hint').textContent =
+        document.getElementById('order-price-type').value === 'MKT'
+            ? '市價單以輸入價估算，僅供參考（未含費用）'
+            : '未含手續費及交易稅';
+}
+
 // ── 系統設定（Config Update）隱藏下單抽屜 ──────────────────────────────
 async function initDrawerControls() {
     const overlay = document.getElementById('drawer-overlay');
@@ -1539,7 +1597,13 @@ async function initDrawerControls() {
     document.getElementById('btn-confirm-cancel').onclick = () => {
         confirmOverlay.classList.remove('active');
     };
-    
+
+    // 預估金額即時試算（v1.7）
+    ['order-price', 'order-qty'].forEach(id =>
+        document.getElementById(id).addEventListener('input', updateOrderEstimate));
+    ['order-lot', 'order-price-type'].forEach(id =>
+        document.getElementById(id).addEventListener('change', updateOrderEstimate));
+
     // 確認下單按鈕點擊處理 (開啟自訂彈出視窗)
     document.getElementById('btn-drawer-submit').onclick = () => {
         const code = document.getElementById('order-code').value;
@@ -1575,7 +1639,9 @@ async function initDrawerControls() {
         document.getElementById('conf-price-type').textContent = priceType === 'LMT' ? '限價 (LMT)' : '市價 (MKT)';
         document.getElementById('conf-price').textContent = `${price.toFixed(2)} 元`;
         document.getElementById('conf-qty').textContent = `${qty} ${lotType === 'Common' ? '張' : '股'}`;
-        
+        document.getElementById('conf-est-amount').textContent =
+            formatOrderAmount(calcOrderAmount(price, qty, lotType));
+
         // 顯示 Modal 遮罩與本體
         confirmOverlay.classList.add('active');
     };
@@ -1669,7 +1735,8 @@ function openOrderDrawer(code, type, lastPrice, exchange) {
     document.getElementById('order-price').value = lastPrice ? lastPrice.toFixed(2) : '';
     document.getElementById('order-qty').value = '1';
     document.getElementById('order-lot').value = 'Common';
-    
+    updateOrderEstimate(); // 帶入預設值後即顯示預估金額（v1.7）
+
     // 開啟抽屜滑出
     document.getElementById('drawer-overlay').classList.add('active');
     document.getElementById('order-drawer').classList.add('active');
@@ -3350,6 +3417,7 @@ const demoState = {
     historyShape: null,
     demoKbars: {},     // code -> Close 陣列
     orderSeq: 1,
+    tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 30）
 };
 
 function mockResponse(data, status = 200) {
@@ -3636,6 +3704,18 @@ function demoPlaceOrder(bodyText) {
 
     const orderId = `DEMO-${String(demoState.orderSeq++).padStart(4, '0')}`;
 
+    // v1.7 假委託紀錄（與後端 trade_logs.json 同構）
+    demoState.tradeLogs.unshift({
+        ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        order_id: orderId,
+        code,
+        action,
+        price,
+        quantity: so.quantity,
+        order_lot: so.order_lot || 'Common',
+    });
+    demoState.tradeLogs = demoState.tradeLogs.slice(0, 30);
+
     // 1~2 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環
     setTimeout(() => {
         if (!state.demoMode) return; // 期間若已關閉 Demo，放棄模擬成交
@@ -3702,6 +3782,7 @@ async function smartFetch(url, options = {}) {
 
     // 本機後端端點
     if (url.includes('/api/trade-permission')) return mockResponse({ trading_permitted: true, reason: '' });
+    if (url.includes('/api/trade-logs')) return mockResponse(demoState.tradeLogs); // v1.7 不洩漏真實委託紀錄
     if (url.includes('/api/asset-history')) return mockResponse(demoAssetHistory()); // GET/POST/匯入/刪除一律回傳唯讀假歷史
     if (url.includes('/api/twse-announcements')) return mockResponse(demoAnnouncements());
     if (url.includes('/api/twse-dividends')) return mockResponse(demoDividends());

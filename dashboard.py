@@ -26,6 +26,36 @@ VERIFICATION_CODE = "PEA6"  # 變更設定的二次安全驗證碼（防肉眼�
 shioaji_proc = None
 shioaji_proc_lock = threading.Lock()
 
+# ── v1.7.0 委託紀錄（記錄「委託成功送出」，非成交；含真實交易資料，勿入版控）──
+TRADE_LOG_FILE = WORKSPACE_DIR / "trade_logs.json"
+TRADE_LOG_MAX = 30
+trade_log_lock = threading.Lock()
+
+
+def _read_trade_logs_unlocked():
+    """讀取委託紀錄；不存在或損壞一律回空清單重建（Log 為輔助資料，不得影響下單主流程）。"""
+    try:
+        logs = json.loads(TRADE_LOG_FILE.read_text(encoding='utf-8'))
+        return logs if isinstance(logs, list) else []
+    except Exception:
+        return []
+
+
+def append_trade_log(entry):
+    """追加一筆委託紀錄（新者在前，僅保留最新 TRADE_LOG_MAX 筆；temp file + os.replace 原子寫入）。"""
+    with trade_log_lock:
+        logs = _read_trade_logs_unlocked()
+        logs.insert(0, entry)
+        logs = logs[:TRADE_LOG_MAX]
+        tmp = TRADE_LOG_FILE.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(logs, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(tmp, TRADE_LOG_FILE)
+
+
+def read_trade_logs():
+    with trade_log_lock:
+        return _read_trade_logs_unlocked()
+
 # ── TWSE OpenAPI 來源與快取 ──────────────────────────────────────────────
 TWSE_ANNOUNCEMENT_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap04_L"
 TWSE_DIVIDEND_URL = "https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL"
@@ -514,6 +544,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_twse_announcements()
         elif self.path.startswith('/api/twse-dividends'):
             self.handle_twse_dividends()
+        elif self.path == '/api/trade-logs':
+            self.handle_get_trade_logs()
         elif self.path.startswith('/api/us-chart'):
             self.handle_us_chart()
         else:
@@ -603,6 +635,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_header('Content-Type', resp.headers.get('Content-Type', 'application/json'))
                 self.end_headers()
                 self.wfile.write(resp_data)
+
+                # v1.7.0 委託成功 → 寫入委託紀錄（任何失敗只印終端機，不影響已回傳的下單回應）
+                if method == "POST" and rel_path == "api/v1/order/place_order" and resp.status == 200:
+                    try:
+                        req_body = json.loads(req_data.decode('utf-8')) if req_data else {}
+                        resp_body = json.loads(resp_data.decode('utf-8'))
+                        so = req_body.get("stock_order", {}) or {}
+                        append_trade_log({
+                            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "order_id": (resp_body.get("order") or {}).get("id", ""),
+                            "code": (req_body.get("contract") or {}).get("code", ""),
+                            "action": so.get("action", ""),
+                            "price": so.get("price", 0),
+                            "quantity": so.get("quantity", 0),
+                            "order_lot": so.get("order_lot", ""),
+                        })
+                    except Exception as log_err:
+                        print(f"\033[93m⚠ 委託紀錄寫入失敗（不影響下單）：{log_err}\033[0m")
         except urllib.error.HTTPError as e:
             try:
                 err_data = e.read()
@@ -622,6 +672,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             # 逾時或連線層級錯誤也印至終端機，便於排障
             print(f"\033[93m⚠ Proxy 連線失敗 [{rel_path}]（等待上限 {proxy_timeout}s）：{e}\033[0m")
             self.send_json_error(500, f"Proxy error: {e}")
+
+    def handle_get_trade_logs(self):
+        """v1.7.0 回傳最新委託紀錄（新者在前，最多 TRADE_LOG_MAX 筆）。"""
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(read_trade_logs(), ensure_ascii=False).encode('utf-8'))
+        except Exception as e:
+            self.send_json_error(500, str(e))
 
     def handle_get_trade_permission(self):
         try:
