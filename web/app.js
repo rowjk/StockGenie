@@ -824,11 +824,21 @@ async function fetchPendingOrders() {
         if (!resp.ok) return; // 失敗保留舊清單，不閃爍
         const trades = await resp.json();
         const all = Array.isArray(trades) ? trades : [];
-        const pending = all.filter(t => t && t.status && PENDING_STATUSES.has(t.status.status));
-        // v1.8.1 偵測「曾掛著、現已死、非自己刪」的委託 → 醒目警示（補 SSE 漏接）
+        // v1.8.4 同一單號可能有兩筆紀錄（預約階段無委託書號 + 開盤轉送後有委託書號 ordno）
+        // → 以「有委託書號者優先」去重，避免結果欄/未成交清單誤判
+        const byId = new Map();
         all.forEach(t => {
             const id = t && t.order && t.order.id;
             if (!id || !t.status) return;
+            const hasOrdno = String(t.order.ordno || '').trim().length > 0;
+            const cur = byId.get(id);
+            if (!cur || (hasOrdno && !String(cur.order.ordno || '').trim())) byId.set(id, t);
+        });
+        const deduped = [...byId.values()];
+        const pending = deduped.filter(t => PENDING_STATUSES.has(t.status.status));
+        // v1.8.1 偵測「曾掛著、現已死、非自己刪」的委託 → 醒目警示（補 SSE 漏接）
+        deduped.forEach(t => {
+            const id = t.order.id;
             _tradeStatusMap[id] = t.status.status; // v1.8.3 供委託紀錄「結果」欄 join
             if (PENDING_STATUSES.has(t.status.status)) {
                 _seenPendingIds.add(id);
