@@ -2046,6 +2046,10 @@ async function refreshDrawerMarket(code, exchange, fallbackLast) {
         console.error('查詢市價/漲跌幅失敗', e);
     }
     renderDrawerMarket();
+    if (document.getElementById('order-price-type').value === 'MKT') {
+        document.getElementById('order-price').value = _drawerMarket.last > 0 ? _drawerMarket.last.toFixed(2) : '';
+        updateOrderEstimate();
+    }
     validateOrderPrice();
 }
 
@@ -2129,8 +2133,18 @@ async function initDrawerControls() {
     // 預估金額即時試算（v1.7）
     ['order-price', 'order-qty'].forEach(id =>
         document.getElementById(id).addEventListener('input', updateOrderEstimate));
-    ['order-lot', 'order-price-type'].forEach(id =>
-        document.getElementById(id).addEventListener('change', updateOrderEstimate));
+    document.getElementById('order-lot').addEventListener('change', updateOrderEstimate);
+    document.getElementById('order-price-type').addEventListener('change', () => {
+        const priceType = document.getElementById('order-price-type').value;
+        const priceInput = document.getElementById('order-price');
+        if (priceType === 'MKT') {
+            priceInput.disabled = true;
+            priceInput.value = _drawerMarket.last > 0 ? _drawerMarket.last.toFixed(2) : '';
+        } else {
+            priceInput.disabled = false;
+        }
+        updateOrderEstimate();
+    });
 
     // 確認下單按鈕點擊處理 (開啟自訂彈出視窗)
     document.getElementById('btn-drawer-submit').onclick = () => {
@@ -2146,8 +2160,8 @@ async function initDrawerControls() {
             alert("請輸入有效的委託價格。");
             return;
         }
-        if (!qtyInput || isNaN(qtyInput) || parseInt(qtyInput) <= 0) {
-            alert("請輸入有效的委託數量。");
+        if (!qtyInput || isNaN(qtyInput) || !/^\d+$/.test(qtyInput) || parseInt(qtyInput) <= 0) {
+            alert("請輸入有效的委託數量（必須為正整數）。");
             return;
         }
         if (priceType === 'LMT' && !validateOrderPrice()) {
@@ -2269,6 +2283,7 @@ function openOrderDrawer(code, type, lastPrice, exchange) {
     document.getElementById('order-qty').value = '1';
     document.getElementById('order-lot').value = 'Common';
     document.getElementById('order-price-type').value = 'LMT'; // v1.8.9 防呆：每次開啟重設為限價（市價須刻意選取，避免上次殘留誤下市價單）
+    document.getElementById('order-price').disabled = false; // v1.9.1 每次開啟重置價格欄位為啟用狀態
     refreshDrawerMarket(code, state.drawerExchange, lastPrice); // v1.9 抓當下市價與漲跌幅
     updateOrderEstimate(); // 帶入預設值後即顯示預估金額（v1.7）
 
