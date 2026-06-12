@@ -656,6 +656,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         append_trade_log({
                             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "order_id": (resp_body.get("order") or {}).get("id", ""),
+                            "seqno": (resp_body.get("order") or {}).get("seqno", ""),  # v1.8.6 與券商 App 一致的委託單號
                             "code": (req_body.get("contract") or {}).get("code", ""),
                             "action": so.get("action", ""),
                             "price": so.get("price", 0),
@@ -699,6 +700,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "type": log_type,
                             "order_id": req_body.get("trade_id", ""),
+                            "seqno": info.get("seqno", ""),  # v1.8.6
                             "code": info.get("code", ""),
                             "action": info.get("action", ""),
                             "price": new_price if new_price is not None else (old_price or 0),
