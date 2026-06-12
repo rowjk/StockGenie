@@ -1964,7 +1964,7 @@ function drawCanvasLoading(canvas, msg = '載入中...') {
     const h = canvas.height = canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
     ctx.font = '13px var(--font-sans)';
-    ctx.fillStyle = 'var(--text-muted, #64748b)';
+    ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(msg, w / 2, h / 2);
@@ -2531,7 +2531,7 @@ function renderAssetChart() {
     let sortedHistory = [...state.assetHistory].sort((a, b) => new Date(a.date) - new Date(b.date));
     
     if (sortedHistory.length === 0) {
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
         ctx.font = '14px var(--font-sans)';
         ctx.textAlign = 'center';
         ctx.fillText('目前無歷史數據。每日開盤連線時，收盤後將自動記錄當天資產淨值。', w / 2, h / 2);
@@ -2557,7 +2557,7 @@ function renderAssetChart() {
     
     const len = sortedHistory.length;
     if (len === 1) {
-        ctx.fillStyle = 'var(--text-muted)';
+        ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
         ctx.font = '13px var(--font-sans)';
         ctx.textAlign = 'center';
         ctx.fillText('目前僅有今日首筆數據。您可以至左側「系統設定」手動補錄過去資產，以繪製趨勢折線。', w / 2, h / 2 - 30);
@@ -2584,7 +2584,7 @@ function renderAssetChart() {
     ctx.strokeStyle = theme === 'dark' ? 'rgba(51, 65, 85, 0.4)' : 'rgba(226, 232, 240, 0.6)';
     ctx.lineWidth = 1;
     ctx.font = '10px var(--font-mono)';
-    ctx.fillStyle = 'var(--text-muted)';
+    ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
     ctx.textAlign = 'right';
     
     ctx.beginPath();
@@ -2931,7 +2931,7 @@ function renderPnlChart() {
     const summaryEl = document.getElementById('pnl-summary');
     if (months.length === 0) {
         if (summaryEl) summaryEl.textContent = '近一年無已實現損益紀錄';
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
         ctx.font = '13px var(--font-sans)';
         ctx.textAlign = 'center';
         ctx.fillText('近 365 天無已實現損益資料（或永豐帳務 API 尚未回應）。', w / 2, h / 2);
@@ -2978,7 +2978,7 @@ function renderPnlChart() {
 
         // 月份座標
         ctx.font = '10px var(--font-mono)';
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
         ctx.fillText(m.slice(2), cx, h - 4);
     });
 }
@@ -3069,7 +3069,7 @@ function maskCanvas(canvas) {
     const h = canvas.height = canvas.clientHeight || canvas.height;
     ctx.clearRect(0, 0, w, h);
     ctx.font = '12px monospace';
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = getThemeColor('--text-muted', '#64748b');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('[DATA MASKED]', w / 2, h / 2);
@@ -3305,6 +3305,16 @@ function isOddLot(pos) {
 // 整張 quantity 單位為張（×1000 換成股），零股單位本身就是股
 function lotMultiplier(pos) {
     return isOddLot(pos) ? 1 : 1000;
+}
+
+function getThemeColor(varName, fallback = '#64748b') {
+    try {
+        const rootStyle = getComputedStyle(document.documentElement);
+        const val = rootStyle.getPropertyValue(varName).trim();
+        return val || fallback;
+    } catch (e) {
+        return fallback;
+    }
 }
 
 function formatCurrency(val) {
