@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import threading
 
+from dpapi import encrypt_str, decrypt_str, is_encrypted
+
 # 解決 Windows 主控台 Unicode 輸出錯誤 (CP950 編碼問題)
 if sys.platform == "win32":
     try:
@@ -274,6 +276,12 @@ def fetch_us_chart(symbol, range_, interval):
     return payload
 
 # ── Load and Map Environment ──────────────────────────────────────────────
+# v1.11.0 DPAPI：.env 與 credentials.json 中的 SECRET_KEY / CA_PASSWORD 以
+# Windows DPAPI（CurrentUser）加密落地，記憶體內一律明文。API_KEY 保持明文：
+# 遮蔽顯示需前後綴、唯讀清單需比對，且單獨持有 API_KEY 無法登入。
+ENV_ENCRYPTED_KEYS = ("SECRET_KEY", "CA_PASSWORD")
+PROFILE_ENCRYPTED_FIELDS = ("secret_key", "ca_password")
+
 def load_env():
     env_path = WORKSPACE_DIR / ".env"
     if not env_path.exists():
@@ -287,6 +295,14 @@ def load_env():
             if "=" in line:
                 key, _, val = line.partition("=")
                 env[key.strip()] = val.strip()
+    # 解密失敗 → 該欄位視為未設定（CA 缺失會自然封鎖下單，朝安全方向降級）
+    for key in ENV_ENCRYPTED_KEYS:
+        if key in env:
+            try:
+                env[key] = decrypt_str(env[key])
+            except ValueError as e:
+                print(f"\033[91m✖ .env {key} {e}\033[0m")
+                env[key] = ""
     return env
 
 def evaluate_trade_permission(env):
@@ -364,10 +380,22 @@ def _atomic_write_text(path, text):
     os.replace(tmp, path)
 
 def save_credentials(db):
-    _atomic_write_text(CREDENTIALS_FILE, json.dumps(db, indent=2, ensure_ascii=False))
+    """寫入 credentials.json；敏感欄位以 DPAPI 加密落地（深複製，不改動記憶體中的明文）。"""
+    out = {"active_index": db.get("active_index", 0), "profiles": []}
+    for p in db.get("profiles", []):
+        enc = dict(p)
+        for field in PROFILE_ENCRYPTED_FIELDS:
+            enc[field] = encrypt_str(enc.get(field, ""))
+        out["profiles"].append(enc)
+    _atomic_write_text(CREDENTIALS_FILE, json.dumps(out, indent=2, ensure_ascii=False))
 
 def load_credentials():
-    """讀取 credentials.json；不存在或損毀時自 .env 初始化第一組設定檔（無縫升級）。"""
+    """讀取 credentials.json（記憶體內為明文）；不存在或損毀時自 .env 初始化（無縫升級）。
+
+    v1.11.0 懶遷移：偵測到明文敏感欄位時立即回寫加密版；解密失敗（換 Windows
+    帳戶）時該欄位降級為空字串並紅字警告，「不」回寫檔案——保留原密文，
+    使用者切回原帳戶仍可救回。
+    """
     if CREDENTIALS_FILE.exists():
         try:
             with open(CREDENTIALS_FILE, encoding="utf-8") as f:
@@ -377,6 +405,24 @@ def load_credentials():
                 idx = db.get("active_index", 0)
                 if not isinstance(idx, int) or not (0 <= idx < len(profiles)):
                     db["active_index"] = 0
+                needs_migration = False
+                decrypt_failed = False
+                for p in profiles:
+                    for field in PROFILE_ENCRYPTED_FIELDS:
+                        val = p.get(field, "")
+                        if not is_encrypted(val):
+                            if val and sys.platform == "win32":
+                                needs_migration = True
+                            continue
+                        try:
+                            p[field] = decrypt_str(val)
+                        except ValueError as e:
+                            print(f"\033[91m✖ credentials.json [{p.get('name', '')}] {field} {e}\033[0m")
+                            p[field] = ""
+                            decrypt_failed = True
+                if needs_migration and not decrypt_failed:
+                    save_credentials(db)
+                    print("🔒 credentials.json 明文金鑰已升級為 DPAPI 加密（綁定目前 Windows 帳戶）")
                 return db
             print("⚠ credentials.json 結構異常，將自 .env 重新初始化")
         except Exception as e:
@@ -399,7 +445,14 @@ def load_credentials():
     return db
 
 def save_env(env_vars):
-    """合併更新 .env：僅覆寫傳入的金鑰欄位，保留其他既有設定與註解。"""
+    """合併更新 .env：僅覆寫傳入的金鑰欄位，保留其他既有設定與註解。
+
+    v1.11.0：SECRET_KEY / CA_PASSWORD 以 DPAPI 加密落地（monitor.py 經 dpapi 解密）。
+    """
+    env_vars = dict(env_vars)
+    for key in ENV_ENCRYPTED_KEYS:
+        if key in env_vars:
+            env_vars[key] = encrypt_str(env_vars[key])
     lines = []
     if ENV_FILE.exists():
         with open(ENV_FILE, encoding="utf-8") as f:
@@ -1190,6 +1243,12 @@ def main():
     db = load_credentials()
     profile = db["profiles"][db["active_index"]]
     print(f"使用設定檔：[{db['active_index']}] {profile.get('name', '')}")
+
+    # v1.11.0：每次啟動同步 .env（明文 .env 順勢升級為 DPAPI 加密，monitor.py 共用）
+    try:
+        save_env(profile_env(profile))
+    except Exception as e:
+        print(f"⚠ .env 同步失敗（不影響啟動）：{e}")
 
     # 先啟動網頁伺服器：即使 Shioaji 啟動失敗，設定頁面仍可修正金鑰（防鎖死）
     web_thread = threading.Thread(target=run_web_server, args=(8081,), daemon=True)

@@ -19,17 +19,19 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.3`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.11.0`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
 
 * **同源防護（v1.10.0）**：8081 不再回應 CORS header，且全部請求校驗 `Host`（防 DNS rebinding）與 `Origin`（防跨站下單 CSRF），白名單僅 `127.0.0.1:8081` / `localhost:8081`。`Origin` 缺席（curl / 本機腳本）放行。
 * **唯讀金鑰清單**：`.env` 的 `READ_ONLY_API_KEYS`（逗號分隔），清單內 API Key 一律禁止下單（不再硬編碼於原始碼）。
+* **金鑰加密落地（v1.11.0）**：`credentials.json` 與 `.env` 的 `SECRET_KEY`/`CA_PASSWORD` 以 Windows DPAPI（CurrentUser）加密（格式 `enc:dpapi:v1:<b64>`，`dpapi.py` 以 ctypes 實作免裝 pywin32）。啟動時自動無縫升級明文舊檔；密文綁定 Windows 帳戶——換帳戶/重灌後需在設定頁重輸金鑰（解密失敗紅字警告且不覆寫原檔）。API_KEY 維持明文（遮蔽顯示與唯讀比對所需，單獨無法登入）。
 * **殘餘風險（無法由本專案修補）**：`shioaji.exe` 守護進程（Port 8080）為官方執行檔，無 Origin 驗證；瀏覽器中的惡意網頁理論上可繞過 8081 直打 8080 下單。緩解：不用時關閉儀表板、瀏覽器勿長期掛載不明網站、必要時以防火牆限制 8080 僅允許本機進程。
 
 ## 版本紀錄
 
+* **v1.11.0**（2026-06-12）：金鑰 DPAPI 加密落地——新增 `dpapi.py`（ctypes 呼叫 CryptProtectData，CurrentUser 範圍）；`save_credentials`/`save_env` 寫入時加密 `secret_key`/`ca_password`（深複製，記憶體保持明文），`load_credentials`/`load_env` 讀取時解密；明文舊檔於啟動時懶遷移；解密失敗（換 Windows 帳戶）降級為空值並紅字警告、不覆寫原檔防資料毀損；monitor.py 同步支援；新增 6 項 DPAPI 測試（含 Windows-only roundtrip 與「落地檔絕無明文」驗證）。
 * **v1.10.3**（2026-06-12）：正式模式 UTC 日期全站掃清（v1.9.3 同類問題的剩餘 6 處）——最關鍵為每日資產歷史存檔 `saveDailyAssetTotal`：00:00~08:00 開儀表板會把今日資產寫到昨日日期鍵、覆蓋昨日真實紀錄；其餘為 K 線/tick 日期區間、除權息過濾與匯出檔名。`getLocalDateStr()` 增加可選 Date 參數，全站統一使用。
 * **v1.10.2**（2026-06-12）：Demo 模式對齊真實 daemon 語意——模擬成交/刪單後委託保留於假 `/order/trades` 並改標 `Filled`/`Cancelled`（不再直接移除），委託紀錄「結果」欄能正確顯示「已成交/已取消」而非 `--`；模擬成交延遲 1~2 秒延長為 5~10 秒，未成交委託卡實際可見；修正 Demo 紀錄時間戳用 `toISOString()`（UTC）導致差 8 小時，改本地時間（含資產歷史/損益的日期序列）。
 * **v1.10.1**（2026-06-12）：修復「Demo 模式下單後未成交委託不出現」——smartFetch 攔截表中 `place_order` 整行因歷史檔案損壞被併入前行 `// v1.7.1` 註解成為死碼（此 bug 存在於遠端 v1.9.3，非 v1.10.0 拆檔引入），Demo 下單一律落入未攔截 fallback 回空物件；現已還原為獨立攔截行，Demo 下單重新進入假資料閉環。
