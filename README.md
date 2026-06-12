@@ -19,7 +19,7 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.0`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.1`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
@@ -30,6 +30,7 @@
 
 ## 版本紀錄
 
+* **v1.10.1**（2026-06-12）：修復「Demo 模式下單後未成交委託不出現」——smartFetch 攔截表中 `place_order` 整行因歷史檔案損壞被併入前行 `// v1.7.1` 註解成為死碼（此 bug 存在於遠端 v1.9.3，非 v1.10.0 拆檔引入），Demo 下單一律落入未攔截 fallback 回空物件；現已還原為獨立攔截行，Demo 下單重新進入假資料閉環。
 * **v1.10.0**（2026-06-12）：安全強化與工程品質版。封堵跨站下單漏洞（移除 `Access-Control-Allow-Origin: *`，新增 Host/Origin 同源校驗，前端 API base 改 `location.origin`）；唯讀金鑰移至 `.env` `READ_ONLY_API_KEYS` 並統一權限判斷為 `evaluate_trade_permission()`（proxy 攔截與 `/api/trade-permission` 共用）；`_kill_shioaji_on_port` 收窄誤殺範圍（僅殺 shioaji，身分不明一律不殺）；credentials 讀改寫加鎖防併發競態；`handle_post_history` 防缺 Content-Length；`app.js` 拆分為 app / us-market / credentials / demo 四檔（零語意變更，普通 script 依序載入）；新增 `tests/test_dashboard.py` 21 項後端單元測試；修復損毀的 git index 並自遠端還原被截斷的工作目錄檔案。
 * **v1.9.3**（2026-06-12）：優化真實模式下「停利停損試算」卡片價格同步——自動從自選股快照同步 Close 價，突破 60 秒帳務輪詢限制；優化已實現損益查詢日期選擇器——限制最大可選日期為今日，且增加區間交叉防呆（開始大於結束時自動拉齊）。
 * **v1.9.2**（2026-06-12）：新增儀表板「已實現損益查詢」卡片。支援自訂起訖日期範圍查詢（預設系統當日）、資訊總覽卡片自訂顯示（持久化於 localStorage）、Boss Key 隱私遮蔽，且在 Demo 模式下提供模擬賣出交易之實現損益累加與高擬真區間加總模擬。

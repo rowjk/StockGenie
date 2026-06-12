@@ -550,7 +550,9 @@ async function smartFetch(url, options = {}) {
         if (url.includes('/order/trades')) return mockResponse(demoState.pendingOrders); // v1.7 假未成交委託
         if (url.includes('/order/cancel_order')) return demoCancelOrder(body); // v1.7.1
         if (url.includes('/order/update_price')) return demoUpdateOrder(body, 'price'); // v1.7.1
-        if (url.includes('/order/update_qty')) return demoUpdateOrder(body, 'qty'); // v1.7.1        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
+        if (url.includes('/order/update_qty')) return demoUpdateOrder(body, 'qty'); // v1.7.1
+        // v1.10.1 修復：本行先前被吃掉換行、整句併入上行註解成死碼——Demo 下單從未進假閉環
+        if (url.includes('/order/place_order')) return demoPlaceOrder(body);
         console.warn(`[DEMO] 未攔截的 proxy 端點（回傳空物件防洩漏）: ${method} ${url}`);
         return mockResponse({});
     }
