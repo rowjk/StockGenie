@@ -148,5 +148,68 @@ class TestUsSymbolValidation(unittest.TestCase):
             self.assertFalse(dashboard.is_valid_us_symbol(s), s)
 
 
+class TestDpapi(unittest.TestCase):
+    """DPAPI 包裝層：格式辨識與降級行為。真實加解密 roundtrip 僅能在 Windows 驗證。"""
+
+    def test_prefix_detected(self):
+        import dpapi
+        self.assertTrue(dpapi.is_encrypted(dpapi.ENC_PREFIX + "QUJD"))
+        self.assertFalse(dpapi.is_encrypted("plain-secret"))
+        self.assertFalse(dpapi.is_encrypted(""))
+
+    def test_plaintext_passthrough_on_decrypt(self):
+        # 向後相容：明文舊檔（無前綴）原樣返回，不得報錯
+        import dpapi
+        self.assertEqual(dpapi.decrypt_str("legacy-plain"), "legacy-plain")
+        self.assertEqual(dpapi.decrypt_str(""), "")
+
+    def test_encrypted_format_not_mistaken_for_masked(self):
+        # 加密格式若被 is_masked_value 誤判，儲存時會錯誤保留舊值
+        import dpapi
+        sample = dpapi.ENC_PREFIX + "QUJDREVGRw=="
+        self.assertFalse(dashboard.is_masked_value(sample))
+
+    def test_double_encrypt_is_noop(self):
+        import dpapi
+        sample = dpapi.ENC_PREFIX + "QUJD"
+        self.assertEqual(dpapi.encrypt_str(sample), sample)
+
+    @unittest.skipUnless(sys.platform == "win32", "DPAPI 僅 Windows")
+    def test_roundtrip_windows(self):
+        import dpapi
+        secret = "測試secret-123!@#"
+        enc = dpapi.encrypt_str(secret)
+        self.assertTrue(dpapi.is_encrypted(enc))
+        self.assertNotIn(secret, enc)
+        self.assertEqual(dpapi.decrypt_str(enc), secret)
+
+    @unittest.skipUnless(sys.platform == "win32", "DPAPI 僅 Windows")
+    def test_save_credentials_never_writes_plaintext_secret(self):
+        # 落地檔案絕不可含明文 secret——這是本功能存在的理由
+        import json
+        import tempfile
+        from pathlib import Path
+        db = {"active_index": 0, "profiles": [{
+            "name": "t", "api_key": "AK", "secret_key": "PLAINTEXT-SECRET",
+            "ca_cert_path": "x.pfx", "ca_password": "PLAINTEXT-PW"}]}
+        orig = dashboard.CREDENTIALS_FILE
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                dashboard.CREDENTIALS_FILE = Path(td) / "credentials.json"
+                dashboard.save_credentials(db)
+                raw = dashboard.CREDENTIALS_FILE.read_text(encoding="utf-8")
+                self.assertNotIn("PLAINTEXT-SECRET", raw)
+                self.assertNotIn("PLAINTEXT-PW", raw)
+                # 記憶體中的 db 不得被改成密文（深複製驗證）
+                self.assertEqual(db["profiles"][0]["secret_key"], "PLAINTEXT-SECRET")
+                # 讀回後自動解密
+                loaded = json.loads(raw)
+                import dpapi
+                self.assertEqual(dpapi.decrypt_str(loaded["profiles"][0]["secret_key"]),
+                                 "PLAINTEXT-SECRET")
+        finally:
+            dashboard.CREDENTIALS_FILE = orig
+
+
 if __name__ == "__main__":
     unittest.main()

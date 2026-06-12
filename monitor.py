@@ -34,6 +34,11 @@ def load_env():
             if "=" in line:
                 key, _, val = line.partition("=")
                 env[key.strip()] = val.strip()
+    # v1.11.0：SECRET_KEY / CA_PASSWORD 可能為 DPAPI 密文（dashboard.py 加密落地）
+    from dpapi import decrypt_str
+    for key in ("SECRET_KEY", "CA_PASSWORD"):
+        if key in env:
+            env[key] = decrypt_str(env[key])  # 解密失敗直接拋錯：登入必失敗，早死早超生
     return env
 
 
