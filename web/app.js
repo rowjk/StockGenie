@@ -572,7 +572,7 @@ function showOrderNotification(data) {
 
     toast.innerHTML = `
         <div class="toast-header">
-            <span>[${cls.label}] 單號 #${data.order?.id || '事件'}</span>
+            <span>[${cls.label}] 單號 #${data.order?.seqno || data.order?.id || '事件'}</span>
             <span class="toast-time">${time}</span>
         </div>
         <div style="margin-top: 4px;">商品：${data.contract?.code} (${data.contract?.name || '股票'})</div>
@@ -1048,7 +1048,8 @@ function openOrderMgmt(mode, trade) {
     const remaining = effQty - (st.deal_quantity || 0); // 剩餘可動數量
     const curPrice = (st.modified_price > 0 ? st.modified_price : o.price) || 0;
 
-    document.getElementById('mgmt-trade-id').textContent = o.id || '--';
+    document.getElementById('mgmt-trade-id').textContent = o.seqno || o.id || '--';
+    document.getElementById('mgmt-trade-id').title = o.id || '';
     document.getElementById('mgmt-code').textContent = c.code || '--';
     document.getElementById('mgmt-current').textContent =
         `${formatDecimal(curPrice, 2)} 元 × ${formatVolume(effQty)} ${unit}（已成交 ${formatVolume(st.deal_quantity || 0)}）`;
@@ -1108,6 +1109,7 @@ async function submitOrderMgmt() {
         // v1.7.2 顯示資訊隨 header 送給 proxy 寫入委託紀錄（上游 schema 僅收 trade_id，header 不轉發）
         const o = trade.order || {}, st = trade.status || {}, c = trade.contract || {};
         const logInfo = encodeURIComponent(JSON.stringify({
+            seqno: o.seqno || '',
             code: c.code || '',
             action: o.action || '',
             order_lot: o.order_lot || '',
@@ -1123,7 +1125,7 @@ async function submitOrderMgmt() {
             if (mode === 'cancel' || (mode === 'qty' && parseInt(document.getElementById('mgmt-input').value) >= remaining)) {
                 _selfCancelledIds.add(tradeId); // v1.8.1 自己刪的單不觸發拒單警示
             }
-            showToastNotification(`委託單 #${tradeId} ${actionText}要求已送出，等待交易所回報...`);
+            showToastNotification(`委託單 #${(trade.order || {}).seqno || tradeId} ${actionText}要求已送出，等待交易所回報...`);
             setTimeout(fetchPendingOrders, 1200); // 略等回報後重拉（SSE 亦會觸發）
             setTimeout(fetchTradeLogs, 1200);     // v1.7.2 改單也產生新紀錄
         } else {
@@ -1193,7 +1195,7 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.code || '--'}</td>
             <td class="mono mask-money">${priceCell}</td>
             <td class="mono mask-money">${qtyCell}</td>
-            <td class="mono">${log.order_id || '--'}</td>
+            <td class="mono" title="${log.order_id || ''}">${log.seqno || log.order_id || '--'}</td>
             ${(() => {
                 const st = _tradeStatusMap[log.order_id];
                 const r = st && RESULT_LABELS[st];
@@ -4198,6 +4200,7 @@ function _demoMgmtLog(t, type, price, quantity, detail) {
         ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
         type,
         order_id: t.order.id,
+        seqno: t.order.seqno || '',
         code: t.contract.code,
         action: t.order.action,
         price,
@@ -4275,11 +4278,13 @@ function demoPlaceOrder(bodyText) {
     }
 
     const orderId = `DEMO-${String(demoState.orderSeq++).padStart(4, '0')}`;
+    const demoSeqno = String(600000 + demoState.orderSeq); // v1.8.6 模擬與 App 一致的流水序號
 
     // v1.7 假委託紀錄（與後端 trade_logs.json 同構）
     demoState.tradeLogs.unshift({
         ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
         order_id: orderId,
+        seqno: demoSeqno,
         code,
         action,
         price,
@@ -4293,7 +4298,7 @@ function demoPlaceOrder(bodyText) {
     // v1.7 假未成交委託（成交回呼時移除）
     demoState.pendingOrders.push({
         contract: { code, exchange: 'TSE', security_type: 'STK' },
-        order: { id: orderId, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common' },
+        order: { id: orderId, seqno: demoSeqno, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common' },
         status: { id: orderId, status: 'Submitted', order_quantity: so.quantity, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, order_ts: Date.now() / 1000 },
     });
 
