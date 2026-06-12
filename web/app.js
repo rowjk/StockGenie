@@ -1031,7 +1031,9 @@ let _mgmtCtx = null; // { mode: 'price'|'qty'|'cancel', trade }
 
 function _effectiveQty(t) {
     const o = t.order || {}, s = t.status || {};
-    return (s.order_quantity ? s.order_quantity - (s.cancel_quantity || 0) : o.quantity) || 0;
+    // 實測定案（2026-06-12 真實減量）：daemon 的 order_quantity 已是扣除減量後的有效量，
+    // cancel_quantity 僅為累計減量紀錄，毋須再相減（與官方 Python 文件範例不同，以實測為準）
+    return (s.order_quantity || o.quantity) || 0;
 }
 
 function openOrderMgmt(mode, trade) {
@@ -4234,11 +4236,13 @@ function demoUpdateOrder(bodyText, kind) {
         t.order.price = t.order.price; // 原始價保留，顯示層以 modified_price 為準
     } else {
         const q = parseInt(body.quantity);
-        const remaining = t.status.order_quantity - (t.status.cancel_quantity || 0) - (t.status.deal_quantity || 0);
+        const remaining = t.status.order_quantity - (t.status.deal_quantity || 0);
         if (!(q > 0) || q > remaining) return mockResponse({ error: `[DEMO 模式] 減量數須為 1 ~ ${remaining}` }, 400);
         _demoMgmtLog(t, 'update_qty', t.status.modified_price > 0 ? t.status.modified_price : t.order.price, q, `-${q}`);
+        // 對齊真實 daemon 語意：order_quantity 直接遞減為有效量，cancel_quantity 累計減量
         t.status.cancel_quantity = (t.status.cancel_quantity || 0) + q;
-        if (t.status.order_quantity - t.status.cancel_quantity - (t.status.deal_quantity || 0) <= 0) {
+        t.status.order_quantity = t.status.order_quantity - q;
+        if (t.status.order_quantity - (t.status.deal_quantity || 0) <= 0) {
             // 全數減量 → 等同刪單
             demoState.cancelledIds.add(t.order.id);
             t.status.status = 'Cancelled';
