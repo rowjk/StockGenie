@@ -19,7 +19,7 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.2`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.3`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
@@ -30,6 +30,7 @@
 
 ## 版本紀錄
 
+* **v1.10.3**（2026-06-12）：正式模式 UTC 日期全站掃清（v1.9.3 同類問題的剩餘 6 處）——最關鍵為每日資產歷史存檔 `saveDailyAssetTotal`：00:00~08:00 開儀表板會把今日資產寫到昨日日期鍵、覆蓋昨日真實紀錄；其餘為 K 線/tick 日期區間、除權息過濾與匯出檔名。`getLocalDateStr()` 增加可選 Date 參數，全站統一使用。
 * **v1.10.2**（2026-06-12）：Demo 模式對齊真實 daemon 語意——模擬成交/刪單後委託保留於假 `/order/trades` 並改標 `Filled`/`Cancelled`（不再直接移除），委託紀錄「結果」欄能正確顯示「已成交/已取消」而非 `--`；模擬成交延遲 1~2 秒延長為 5~10 秒，未成交委託卡實際可見；修正 Demo 紀錄時間戳用 `toISOString()`（UTC）導致差 8 小時，改本地時間（含資產歷史/損益的日期序列）。
 * **v1.10.1**（2026-06-12）：修復「Demo 模式下單後未成交委託不出現」——smartFetch 攔截表中 `place_order` 整行因歷史檔案損壞被併入前行 `// v1.7.1` 註解成為死碼（此 bug 存在於遠端 v1.9.3，非 v1.10.0 拆檔引入），Demo 下單一律落入未攔截 fallback 回空物件；現已還原為獨立攔截行，Demo 下單重新進入假資料閉環。
 * **v1.10.0**（2026-06-12）：安全強化與工程品質版。封堵跨站下單漏洞（移除 `Access-Control-Allow-Origin: *`，新增 Host/Origin 同源校驗，前端 API base 改 `location.origin`）；唯讀金鑰移至 `.env` `READ_ONLY_API_KEYS` 並統一權限判斷為 `evaluate_trade_permission()`（proxy 攔截與 `/api/trade-permission` 共用）；`_kill_shioaji_on_port` 收窄誤殺範圍（僅殺 shioaji，身分不明一律不殺）；credentials 讀改寫加鎖防併發競態；`handle_post_history` 防缺 Content-Length；`app.js` 拆分為 app / us-market / credentials / demo 四檔（零語意變更，普通 script 依序載入）；新增 `tests/test_dashboard.py` 21 項後端單元測試；修復損毀的 git index 並自遠端還原被截斷的工作目錄檔案。

@@ -808,8 +808,7 @@ async function fetchSettlements(stockAcc) {
 // ── 已實現損益查詢 ──────────────────────────────────────────────────────────
 
 // 取得本地系統時間 YYYY-MM-DD
-function getLocalDateStr() {
-    const d = new Date();
+function getLocalDateStr(d = new Date()) {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
@@ -1941,10 +1940,10 @@ async function fetchKbarsWithCache(code) {
     }
     const item = state.watchlist.find(wi => wi.code === code);
     const exchange = item ? (item.exchange || 'TSE') : 'TSE';
-    const end = new Date().toISOString().split('T')[0];
+    const end = getLocalDateStr();
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 2);
-    const start = startDate.toISOString().split('T')[0];
+    const start = getLocalDateStr(startDate);
     const secType = item ? (item.security_type || 'STK') : 'STK';
     const resp = await smartFetch(`${API_BASE}/data/kbars`, {
         method: 'POST',
@@ -1999,7 +1998,7 @@ async function renderDetailTickChart(code) {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateStr();
     
     try {
         const item = state.watchlist.find(w => w.code === code);
@@ -2505,7 +2504,7 @@ async function saveDailyAssetTotal() {
     state.stockMarketValue = totalStockMarketVal;
     state.totalAssets = totalAssets;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateStr();
 
     // 每次都更新即時顯示
     document.getElementById('trend-summary').textContent = `資產加總: ${formatCurrency(totalAssets)} TWD`;
@@ -2674,7 +2673,7 @@ function initHistoryControls() {
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `asset_history_${new Date().toISOString().split('T')[0]}.json`;
+            a.download = `asset_history_${getLocalDateStr()}.json`;
             a.click();
             URL.revokeObjectURL(a.href);
         } catch (e) {
@@ -3052,7 +3051,7 @@ function renderDividends(list) {
     if (!container) return;
     container.innerHTML = '';
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateStr();
     const upcoming = (Array.isArray(list) ? list : []).filter(d => d.date >= today);
 
     if (upcoming.length === 0) {
