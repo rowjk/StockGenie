@@ -531,31 +531,64 @@ function closeSSE() {
     }
 }
 
+
+// ── v1.8.1 委託回報分級：拒單/失敗醒目警示（修「被拒單無聲消失」） ──────
+function sanitizeOrderMsg(msg) {
+    if (!msg) return '';
+    // daemon 編碼損壞時 msg 會變成大量問號（可能夾雜 OC/OK 等殘片）→ 以問號占比判斷
+    const str = String(msg);
+    const chars = str.replace(/\s/g, '');
+    if (!chars) return '';
+    const qm = (chars.match(/\?/g) || []).length;
+    return (qm / chars.length > 0.3) ? '' : str;
+}
+
+function classifyOrderEvent(data) {
+    const op = (data && data.operation) || {};
+    const st = (data && data.status && data.status.status) || '';
+    // shioaji 委託回報：op_code '00' 為成功，其餘為失敗；op_msg 為原因
+    if ((op.op_code && op.op_code !== '00') || st === 'Failed') {
+        return { level: 'error', label: '⚠ 委託失敗 / 遭券商拒絕' };
+    }
+    if (st === 'Cancelled' || op.op_type === 'Cancel') {
+        return { level: 'warn', label: '委託已取消' };
+    }
+    return { level: 'info', label: '委託異動日誌' };
+}
+
 function showOrderNotification(data) {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
-    toast.className = 'toast';
-    
+    const cls = classifyOrderEvent(data);
+    toast.className = cls.level === 'info' ? 'toast' : `toast toast-${cls.level}`;
+
     const time = new Date().toLocaleTimeString();
-    
-    // 將下單委託通知以系統日誌 Log 的低調外觀呈現
+    const op = data.operation || {};
+    const reason = sanitizeOrderMsg(op.op_msg || data.status?.msg);
+    // 拒單原因可能因 daemon 編碼損壞而不可讀 → 提示改查代碼
+    const reasonLine = cls.level === 'error'
+        ? `<div style="margin-top: 4px;">原因：${reason || `代碼 ${op.op_code || data.status?.status_code || '未知'}（原因文字編碼異常，詳情請查券商 App）`}</div>`
+        : '';
+
     toast.innerHTML = `
         <div class="toast-header">
-            <span>[委託異動日誌] 單號 #${data.order?.id || '事件'}</span>
+            <span>[${cls.label}] 單號 #${data.order?.id || '事件'}</span>
             <span class="toast-time">${time}</span>
         </div>
         <div style="margin-top: 4px;">商品：${data.contract?.code} (${data.contract?.name || '股票'})</div>
-        <div>委託狀態：<span class="val-up">${data.status?.status || '已送出'}</span></div>
+        <div>委託狀態：<span class="${cls.level === 'info' ? 'val-up' : 'val-down'}">${data.status?.status || '已送出'}</span></div>
+        ${reasonLine}
         <div style="color: var(--text-secondary);">數量：${data.order?.quantity} | 價格：$${data.order?.price}</div>
     `;
-    
+
     container.appendChild(toast);
-    
-    // 6 秒後自動關閉通知
+
+    // 拒單/取消警示停留 15 秒，一般通知 6 秒
+    const dwell = cls.level === 'info' ? 6000 : 15000;
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
-    }, 6000);
+    }, dwell);
 }
 
 // ── 定時拉取資料控制 ────────────────────────────────────────────────────
@@ -760,6 +793,9 @@ const STATUS_LABELS = {
     PartFilled: '部分成交', Filled: '完全成交', Cancelled: '已取消', Failed: '失敗', Inactive: '無效',
 };
 let _pendingOrdersTimer = null; // SSE debounce
+const _seenPendingIds = new Set();   // v1.8.1 本次連線曾出現在未成交清單的單號
+const _selfCancelledIds = new Set(); // v1.8.1 使用者自行刪單/全減的單號（不警示）
+const _warnedDeadIds = new Set();    // v1.8.1 已警示過的死單（防重複）
 
 function _tsToTimeStr(ts) {
     if (!ts) return '--';
@@ -785,8 +821,25 @@ async function fetchPendingOrders() {
         });
         if (!resp.ok) return; // 失敗保留舊清單，不閃爍
         const trades = await resp.json();
-        const pending = (Array.isArray(trades) ? trades : [])
-            .filter(t => t && t.status && PENDING_STATUSES.has(t.status.status));
+        const all = Array.isArray(trades) ? trades : [];
+        const pending = all.filter(t => t && t.status && PENDING_STATUSES.has(t.status.status));
+        // v1.8.1 偵測「曾掛著、現已死、非自己刪」的委託 → 醒目警示（補 SSE 漏接）
+        all.forEach(t => {
+            const id = t && t.order && t.order.id;
+            if (!id || !t.status) return;
+            if (PENDING_STATUSES.has(t.status.status)) {
+                _seenPendingIds.add(id);
+            } else if ((t.status.status === 'Cancelled' || t.status.status === 'Failed')
+                       && _seenPendingIds.has(id) && !_selfCancelledIds.has(id) && !_warnedDeadIds.has(id)) {
+                _warnedDeadIds.add(id);
+                showOrderNotification({
+                    operation: { op_code: '99', op_msg: '' }, // 強制走 error 分級
+                    order: { id, quantity: t.order.quantity, price: t.order.price },
+                    contract: t.contract,
+                    status: t.status,
+                });
+            }
+        });
         renderPendingOrders(pending);
         const updatedEl = document.getElementById('pending-orders-updated');
         if (updatedEl) updatedEl.textContent = `更新於 ${new Date().toLocaleTimeString('en-GB')}`;
@@ -1051,6 +1104,9 @@ async function submitOrderMgmt() {
             body: JSON.stringify(payload)
         });
         if (resp.ok) {
+            if (mode === 'cancel' || (mode === 'qty' && parseInt(document.getElementById('mgmt-input').value) >= remaining)) {
+                _selfCancelledIds.add(tradeId); // v1.8.1 自己刪的單不觸發拒單警示
+            }
             showToastNotification(`委託單 #${tradeId} ${actionText}要求已送出，等待交易所回報...`);
             setTimeout(fetchPendingOrders, 1200); // 略等回報後重拉（SSE 亦會觸發）
             setTimeout(fetchTradeLogs, 1200);     // v1.7.2 改單也產生新紀錄

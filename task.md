@@ -11,7 +11,7 @@
   (c) tradingPermitted 或其他 guard 在 Demo 初始化順序下未就緒。
   排查時先開 Demo 開 DevTools Console 看 [DEMO] 警告與錯誤。
 
-* **被拒單無聲消失**（2026-06-12 實測發現）：盤前市價單被券商拒絕（status=Cancelled, status_code=X），
+* ~~已修（v1.8.1）~~ **被拒單無聲消失**（2026-06-12 實測發現）：盤前市價單被券商拒絕（status=Cancelled, status_code=X），
   但委託紀錄只顯示「下單」成功、無任何拒單提示，使用者無從得知委託已死。優化方向：
   (a) SSE order_event 收到 Cancelled/Failed 時 toast 顯示拒單與原因；
   (b) fetchPendingOrders 偵測「紀錄裡有、清單裡無、狀態為 Cancelled/Failed 且非自己刪的單」主動警示；

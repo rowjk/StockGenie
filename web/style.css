@@ -1570,3 +1570,13 @@ body.boss-mode .mask-block::after {
     margin-bottom: 16px;
     flex-wrap: wrap;
 }
+
+/* ── v1.8.1 拒單/取消警示 toast ──────────────────────────────────────── */
+.toast-error {
+    border-left-color: #e11d48;
+    box-shadow: 0 10px 15px -3px rgba(225, 29, 72, 0.25);
+}
+
+.toast-warn {
+    border-left-color: #f59e0b;
+}
