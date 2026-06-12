@@ -513,7 +513,7 @@ function startSSE() {
             showOrderNotification(data);
             // v1.7 未成交委託：委託回報事件觸發重拉（debounce 2s，單一資料來源防競態）
             clearTimeout(_pendingOrdersTimer);
-            _pendingOrdersTimer = setTimeout(fetchPendingOrders, 2000);
+            _pendingOrdersTimer = setTimeout(() => { fetchPendingOrders(); fetchTradeLogs(); }, 2000);
         } catch (e) {
             console.error("解析即時回報事件失敗", e);
         }
@@ -792,6 +792,13 @@ const STATUS_LABELS = {
     PreSubmitted: '預約送出', PendingSubmit: '傳送中', Submitted: '已送出',
     PartFilled: '部分成交', Filled: '完全成交', Cancelled: '已取消', Failed: '失敗', Inactive: '無效',
 };
+const PT_LABELS = { LMT: '限價', MKT: '市價', MKP: '範圍市價' };
+const COND_LABELS = { Cash: '現股', MarginTrading: '融資', ShortSelling: '融券' };
+
+function formatOrderCond(priceType, orderCond) {
+    if (!priceType && !orderCond) return '--';
+    return `${PT_LABELS[priceType] || priceType || ''} ${COND_LABELS[orderCond] || orderCond || ''}`.trim();
+}
 let _pendingOrdersTimer = null; // SSE debounce
 const _tradeStatusMap = {};          // v1.8.3 order_id → 最新委託狀態（來源 /order/trades，daemon 重啟後僅含當日單）
 const _tradeSeqnoMap = {};           // v1.8.7 order_id → seqno（舊紀錄未存 seqno 時動態補顯）
@@ -880,8 +887,10 @@ function renderPendingOrders(pending) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td class="mono">${_tsToTimeStr(s.order_ts)}</td>
+            <td class="mono" title="${o.id || ''}">${String(o.seqno || '').trim() || o.id || '--'}</td>
             <td class="mono">${c.code || '--'}${name ? ` <span style="color:var(--text-muted)">${name}</span>` : ''}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${isBuy ? '買進' : '賣出'}</td>
+            <td>${formatOrderCond(o.price_type, o.order_cond)}</td>
             <td class="mono mask-money">${formatDecimal(price, 2)}</td>
             <td class="mono mask-money">${formatVolume(effQty)} ${unit}</td>
             <td class="mono mask-money">${formatVolume(s.deal_quantity || 0)}</td>
@@ -1165,8 +1174,6 @@ function renderTradeLogs(logs) {
     const list = Array.isArray(logs) ? logs : [];
     empty.style.display = list.length === 0 ? '' : 'none';
     const TYPE_LABELS = { place: '下單', update_price: '改價', update_qty: '減量', cancel: '刪單' }; // 無 type 的舊紀錄視為下單
-    const PT_LABELS = { LMT: '限價', MKT: '市價', MKP: '範圍市價' };
-    const COND_LABELS = { Cash: '現股', MarginTrading: '融資', ShortSelling: '融券' };
     // v1.8.3 結果欄：以單號 join 即時委託狀態（daemon 重啟前的歷史單查不到 → --）
     const RESULT_LABELS = {
         Filled:        ['已成交', 'val-up'],
@@ -1193,7 +1200,7 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.ts || '--'}</td>
             <td style="color:${typeColor}">${TYPE_LABELS[type] || type}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${log.action ? (isBuy ? '買進' : '賣出') : '--'}</td>
-            <td>${log.price_type ? `${PT_LABELS[log.price_type] || log.price_type} ${COND_LABELS[log.order_cond] || ''}`.trim() : '--'}</td>
+            <td>${log.price_type ? formatOrderCond(log.price_type, log.order_cond) : '--'}</td>
             <td class="mono">${log.code || '--'}</td>
             <td class="mono mask-money">${priceCell}</td>
             <td class="mono mask-money">${qtyCell}</td>
@@ -2153,8 +2160,9 @@ async function initDrawerControls() {
                 // 彈出中文化日誌通知
                 showToastNotification(`委託單 #${res.order?.id || '建立'} 已成功送出，正在等待交易所成交回報...`);
                 
-                // 延遲 1 秒後刷新數據
+                // 延遲刷新：整體數據 + 未成交/委託紀錄（後兩者屬慢速輪次，主動補刷）
                 setTimeout(fetchData, 1000);
+                setTimeout(() => { fetchPendingOrders(); fetchTradeLogs(); }, 1500);
             } else {
                 const err = await resp.text();
                 alert(`委託單發送失敗：${err}`);
@@ -4300,7 +4308,7 @@ function demoPlaceOrder(bodyText) {
     // v1.7 假未成交委託（成交回呼時移除）
     demoState.pendingOrders.push({
         contract: { code, exchange: 'TSE', security_type: 'STK' },
-        order: { id: orderId, seqno: demoSeqno, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common' },
+        order: { id: orderId, seqno: demoSeqno, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common', price_type: so.price_type || 'LMT', order_cond: so.order_cond || 'Cash' },
         status: { id: orderId, status: 'Submitted', order_quantity: so.quantity, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, order_ts: Date.now() / 1000 },
     });
 
