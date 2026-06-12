@@ -17,11 +17,12 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**（目前 `v1.8.8`）：`index.html` footer + 本 README 版本紀錄。
+* 任何程式修改**必須同步更新版本號**（目前 `v1.8.9`）：`index.html` footer + 本 README 版本紀錄。
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 版本紀錄
 
+* **v1.8.9**（2026-06-12）：下單抽屜每次開啟重設價格類型為限價（修「上次選市價殘留，本次誤送市價單」陷阱——實測 651612 拒單根因：集合競價時段不可市價/IOC/FOK）；拒單代碼中文對照表（49=競價時段限限價、X=系統取消），daemon 訊息編碼損壞時 fallback 顯示。
 * **v1.8.8**（2026-06-12）：未成交委託卡新增「單號」（seqno，與 App 一致）與「條件」（限價/市價 + 現股/融資/融券）欄；下單成功與 SSE 委託回報後 1.5~2 秒內主動刷新未成交與委託紀錄（不再等 60 秒慢速輪次）；條件標籤表提升為單一共用來源。
 * **v1.8.7**（2026-06-12）：舊委託紀錄的單號也能對上券商 App——以 order_id 動態對照當日 `/order/trades` 的 seqno 補顯（daemon 查得到就顯示流水號，查不到才退回內部 id）。
 * **v1.8.6**（2026-06-12）：單號顯示與券商 App 一致——委託紀錄/管理 Modal/toast 一律優先顯示 `seqno`（流水序號，即 App 的委託單號），shioaji 內部 id 退居 hover title 與舊紀錄 fallback；後端紀錄與 X-Log-Info 補存 seqno；Demo 同步模擬流水號。

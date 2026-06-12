@@ -543,6 +543,12 @@ function sanitizeOrderMsg(msg) {
     return (qm / chars.length > 0.3) ? '' : str;
 }
 
+// 已知拒單代碼對照（daemon msg 編碼損壞時顯示；實測累積）
+const STATUS_CODE_HINTS = {
+    '49': '集合競價時段不可輸入市價、IOC、FOK 委託（盤前/收盤前競價時段請改限價）',
+    'X':  '委託遭系統取消（如：預約時段不接受市價單）',
+};
+
 function classifyOrderEvent(data) {
     const op = (data && data.operation) || {};
     const st = (data && data.status && data.status.status) || '';
@@ -567,7 +573,11 @@ function showOrderNotification(data) {
     const reason = sanitizeOrderMsg(op.op_msg || data.status?.msg);
     // 拒單原因可能因 daemon 編碼損壞而不可讀 → 提示改查代碼
     const reasonLine = cls.level === 'error'
-        ? `<div style="margin-top: 4px;">原因：${reason || `代碼 ${op.op_code || data.status?.status_code || '未知'}（原因文字編碼異常，詳情請查券商 App）`}</div>`
+        ? (() => {
+            const code = op.op_code || data.status?.status_code || '未知';
+            const hint = STATUS_CODE_HINTS[code];
+            return `<div style="margin-top: 4px;">原因：${reason || (hint ? `${hint}（代碼 ${code}）` : `代碼 ${code}（原因文字編碼異常，詳情請查券商 App）`)}</div>`;
+        })()
         : '';
 
     toast.innerHTML = `
@@ -2193,6 +2203,7 @@ function openOrderDrawer(code, type, lastPrice, exchange) {
     document.getElementById('order-price').value = lastPrice ? lastPrice.toFixed(2) : '';
     document.getElementById('order-qty').value = '1';
     document.getElementById('order-lot').value = 'Common';
+    document.getElementById('order-price-type').value = 'LMT'; // v1.8.9 防呆：每次開啟重設為限價（市價須刻意選取，避免上次殘留誤下市價單）
     updateOrderEstimate(); // 帶入預設值後即顯示預估金額（v1.7）
 
     // 開啟抽屜滑出
