@@ -16,6 +16,7 @@
   (a) SSE order_event 收到 Cancelled/Failed 時 toast 顯示拒單與原因；
   (b) fetchPendingOrders 偵測「紀錄裡有、清單裡無、狀態為 Cancelled/Failed 且非自己刪的單」主動警示；
   (c) 注意：daemon 回傳的 msg 編碼已損壞（全問號），顯示時只能依 status_code 對照表轉中文。
+  已知代碼（實測累積）：49=集合競價時段不可市價/IOC/FOK；X=系統取消（預約時段不收市價）。v1.8.9 已建 STATUS_CODE_HINTS 對照。
 
 ## 盤中待驗證（2026-06-12 開盤）
 
