@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.9.1">
+    <link rel="stylesheet" href="style.css?v=1.9.2">
 </head>
 <body>
     <div class="app-container">
@@ -236,6 +236,23 @@
                             </div>
                             <div class="metric-value mask-money" id="total-assets">--</div>
                             <div class="metric-subtitle">現金餘額 + 證券市值 (TWD)</div>
+                        </div>
+
+                        <!-- Realized Profit/Loss Card -->
+                        <div class="card" data-card-key="todaypnl">
+                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                                <span class="card-title">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
+                                    已實現損益查詢
+                                </span>
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <input type="date" id="pnl-start-date" style="font-size: 0.75rem; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-main); font-family: var(--font-sans); outline: none;">
+                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">至</span>
+                                    <input type="date" id="pnl-end-date" style="font-size: 0.75rem; padding: 2px 4px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-main); font-family: var(--font-sans); outline: none;">
+                                </div>
+                            </div>
+                            <div class="metric-value mask-money" id="today-realized-pnl">--</div>
+                            <div class="metric-subtitle" id="pnl-range-subtitle">今日實現損益合計 (TWD)</div>
                         </div>
                     </div>
 
@@ -663,6 +680,7 @@
                                         <label><input type="checkbox" data-card-key="limit" checked> 交易額度監控</label>
                                         <label><input type="checkbox" data-card-key="marketval" checked> 庫存證券總市值</label>
                                         <label><input type="checkbox" data-card-key="totalassets" checked> 總資產</label>
+                                        <label><input type="checkbox" data-card-key="todaypnl" checked> 本日已實現損益</label>
                                         <label><input type="checkbox" data-card-key="trend" checked> 總資產歷史趨勢</label>
                                         <label><input type="checkbox" data-card-key="settlements" checked> 交割款查詢</label>
                                         <label><input type="checkbox" data-card-key="pnl" checked> 已實現月度損益</label>
@@ -785,7 +803,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.9.1</span>
+                    <span>版本號: v1.9.2</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
@@ -1032,6 +1050,6 @@
         </div>
     </div>
 
-    <script src="app.js?v=1.9.1"></script>
+    <script src="app.js?v=1.9.2"></script>
 </body>
 </html>
