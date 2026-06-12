@@ -167,7 +167,7 @@ function demoSettlements() {
     return amounts.map((amount, t) => {
         const d = new Date();
         d.setDate(d.getDate() + t);
-        return { T: t, date: d.toISOString().split('T')[0], amount };
+        return { T: t, date: _demoLocalDate(d), amount };
     });
 }
 
@@ -178,7 +178,7 @@ function demoProfitLoss() {
     const out = [];
     for (let i = 11; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 15);
-        out.push({ date: d.toISOString().split('T')[0], pnl: seeds[11 - i] });
+        out.push({ date: _demoLocalDate(d), pnl: seeds[11 - i] });
     }
     return out;
 }
@@ -202,7 +202,7 @@ function demoAssetHistory() {
     return demoState.historyShape.map((shape, i) => {
         const d = new Date(today);
         d.setDate(d.getDate() - (89 - i));
-        return { date: d.toISOString().split('T')[0], value: Math.round(finalVal * shape) };
+        return { date: _demoLocalDate(d), value: Math.round(finalVal * shape) };
     });
 }
 
@@ -277,7 +277,7 @@ function demoAnnouncements() {
         return {
             code: w.code,
             name: demoName(w.code),
-            date: d.toISOString().split('T')[0],
+            date: _demoLocalDate(d),
             time: `${String(9 + i).padStart(2, '0')}3000`,
             subject: subjects[i % subjects.length],
             clause: '第 51 款',
@@ -295,7 +295,7 @@ function demoDividends() {
         return {
             code: w.code,
             name: demoName(w.code),
-            date: d.toISOString().split('T')[0],
+            date: _demoLocalDate(d),
             type: i % 3 === 0 ? '息' : '權息',
             cash_dividend: Math.round(q.ref * 0.025 * 100) / 100,
             stock_dividend_ratio: null,
@@ -352,13 +352,22 @@ function demoUsChart(urlStr) {
 
 // 下單閉環模擬：買進加庫存扣餘額；賣出限假庫存內，成交後減庫存增餘額
 // ── v1.7.1 Demo 委託單管理 ──────────────────────────────────────────────
+// v1.10.2 本地時間 helpers：先前用 toISOString() 是 UTC，紀錄時間戳差 8 小時
+function _demoLocalTs(d = new Date()) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function _demoLocalDate(d = new Date()) { return _demoLocalTs(d).slice(0, 10); }
+
 function _demoFindPending(tradeId) {
-    return demoState.pendingOrders.find(t => t.order.id === tradeId);
+    // v1.10.2 已成交/已取消的單仍留在清單（對齊真實 daemon），管理操作僅限掛單中狀態
+    const t = demoState.pendingOrders.find(t => t.order.id === tradeId);
+    return (t && PENDING_STATUSES.has(t.status.status)) ? t : null;
 }
 
 function _demoMgmtLog(t, type, price, quantity, detail) {
     demoState.tradeLogs.unshift({
-        ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        ts: _demoLocalTs(),
         type,
         order_id: t.order.id,
         seqno: t.order.seqno || '',
@@ -382,7 +391,6 @@ function demoCancelOrder(bodyText) {
     demoState.cancelledIds.add(trade_id);
     t.status.status = 'Cancelled';
     t.status.cancel_quantity = t.status.order_quantity - (t.status.deal_quantity || 0);
-    demoState.pendingOrders = demoState.pendingOrders.filter(x => x.order.id !== trade_id);
     return mockResponse(t);
 }
 
@@ -410,7 +418,6 @@ function demoUpdateOrder(bodyText, kind) {
             // 全數減量 → 等同刪單
             demoState.cancelledIds.add(t.order.id);
             t.status.status = 'Cancelled';
-            demoState.pendingOrders = demoState.pendingOrders.filter(x => x.order.id !== t.order.id);
         }
     }
     return mockResponse(t);
@@ -443,7 +450,7 @@ function demoPlaceOrder(bodyText) {
 
     // v1.7 假委託紀錄（與後端 trade_logs.json 同構）
     demoState.tradeLogs.unshift({
-        ts: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        ts: _demoLocalTs(),
         order_id: orderId,
         seqno: demoSeqno,
         code,
@@ -456,14 +463,14 @@ function demoPlaceOrder(bodyText) {
     });
     demoState.tradeLogs = demoState.tradeLogs.slice(0, 99);
 
-    // v1.7 假未成交委託（成交回呼時移除）
+    // v1.7 假未成交委託（v1.10.2 起成交/取消後保留並改狀態，對齊真實 daemon）
     demoState.pendingOrders.push({
         contract: { code, exchange: 'TSE', security_type: 'STK' },
         order: { id: orderId, seqno: demoSeqno, action, price, quantity: so.quantity, order_lot: so.order_lot || 'Common', price_type: so.price_type || 'LMT', order_cond: so.order_cond || 'Cash' },
         status: { id: orderId, status: 'Submitted', order_quantity: so.quantity, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, order_ts: Date.now() / 1000 },
     });
 
-    // 1~2 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環
+    // 5~10 秒後模擬成交並更新假庫存/假餘額，演示完整下單閉環（v1.10.2 延長以便觀察未成交狀態）
     setTimeout(() => {
         if (!state.demoMode) return; // 期間若已關閉 Demo，放棄模擬成交
         if (demoState.cancelledIds.has(orderId)) return; // v1.7.1 已刪單 → 放棄模擬成交
@@ -489,7 +496,12 @@ function demoPlaceOrder(bodyText) {
             }
         }
 
-        demoState.pendingOrders = demoState.pendingOrders.filter(t => t.order.id !== orderId); // v1.7 成交後移除假未成交
+        // v1.10.2 對齊真實 daemon：成交後保留於 /order/trades 並標 Filled（結果欄顯示「已成交」），不再移除
+        const filled = demoState.pendingOrders.find(t => t.order.id === orderId);
+        if (filled) {
+            filled.status.status = 'Filled';
+            filled.status.deal_quantity = filled.status.order_quantity - (filled.status.cancel_quantity || 0);
+        }
         showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${formatDecimal(price, 2)}`);
         _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
         fetchData();
@@ -497,7 +509,7 @@ function demoPlaceOrder(bodyText) {
         if (stockAcc) {
             fetchTodayRealizedPnl(stockAcc);
         }
-    }, 1000 + Math.random() * 1000);
+    }, 5000 + Math.random() * 5000); // v1.10.2 原 1~2 秒太快，未成交卡幾乎不可見
 
     return mockResponse({ order: { id: orderId, price, quantity: so.quantity }, status: { status: 'PendingSubmit' } });
 }
