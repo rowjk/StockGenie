@@ -121,6 +121,9 @@ let state = {
     stockMarketValue: 0,
     totalAssets: 0,
     profitLoss: [],          // 已實現損益原始紀錄
+    todayRealizedPnl: null,  // 當前所選日期區間的已實現總損益
+    pnlStartDate: '',        // 已實現損益查詢開始日期
+    pnlEndDate: '',          // 已實現損益查詢結束日期
     twseFeedTimer: null,     // TWSE 公告/除權息定時更新
     demoMode: localStorage.getItem('demoMode') === 'true', // Demo 演示模式（前端攔截假數據）
 };
@@ -131,7 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
                       initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
                       initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt, initOrderMgmt, initTpsl,
-                      initDemoMode]) {
+                      initDemoMode, initPnlDateRange]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
 
@@ -645,6 +648,12 @@ async function fetchData() {
         tasks.push(fetchSettlements(stockAcc));
         tasks.push(fetchTradeLogs()); // v1.7 委託紀錄（本機端點，併入帳務輪次 ≈ 60s）
         tasks.push(fetchPendingOrders()); // v1.7 未成交委託（自動先 update status 再回快取）
+        
+        const todayStr = getLocalDateStr();
+        const rangeIncludesToday = (todayStr >= state.pnlStartDate && todayStr <= state.pnlEndDate);
+        if (rangeIncludesToday) {
+            tasks.push(fetchTodayRealizedPnl(stockAcc));
+        }
     }
     // 自選股即時資訊（最需要即時，不再被帳務查詢卡住）
     // v1.5.1：停在美股分頁時暫停台股自選快照（帳務照常），節省 Shioaji API 額度
@@ -792,6 +801,136 @@ async function fetchSettlements(stockAcc) {
         } catch (e) {
             console.error("獲取交割款數據失敗", e);
         }
+}
+
+// ── 已實現損益查詢 ──────────────────────────────────────────────────────────
+
+// 取得本地系統時間 YYYY-MM-DD
+function getLocalDateStr() {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+// 初始化已實現損益查詢卡片的日期與監聽器
+function initPnlDateRange() {
+    const startInput = document.getElementById('pnl-start-date');
+    const endInput = document.getElementById('pnl-end-date');
+    if (!startInput || !endInput) return;
+
+    const todayStr = getLocalDateStr();
+    state.pnlStartDate = todayStr;
+    state.pnlEndDate = todayStr;
+
+    startInput.value = todayStr;
+    endInput.value = todayStr;
+
+    const handleDateChange = async () => {
+        state.pnlStartDate = startInput.value;
+        state.pnlEndDate = endInput.value;
+        const stockAcc = state.accounts.find(a => a.account_type === 'S');
+        if (stockAcc) {
+            await fetchTodayRealizedPnl(stockAcc);
+        }
+    };
+
+    startInput.addEventListener('change', handleDateChange);
+    endInput.addEventListener('change', handleDateChange);
+}
+
+// 獲取指定日期區間的已實現損益
+async function fetchTodayRealizedPnl(stockAcc) {
+    if (state.demoMode) {
+        state.todayRealizedPnl = getDemoPnlForRange(state.pnlStartDate, state.pnlEndDate);
+        renderTodayRealizedPnl();
+        return;
+    }
+    try {
+        const resp = await smartFetch(`${API_BASE}/portfolio/profit_loss`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                account_type: 'S',
+                broker_id: stockAcc.broker_id,
+                account_id: stockAcc.account_id,
+                person_id: stockAcc.person_id,
+                begin_date: state.pnlStartDate,
+                end_date: state.pnlEndDate
+            })
+        });
+        if (!resp.ok) {
+            console.warn(`已實現損益查詢失敗 HTTP${resp.status}`);
+            return;
+        }
+        const data = await resp.json();
+        const list = Array.isArray(data) ? data : (data.profitloss || data.data || []);
+        let total = 0;
+        list.forEach(item => {
+            total += Number(item.pnl) || 0;
+        });
+        state.todayRealizedPnl = total;
+        renderTodayRealizedPnl();
+    } catch (e) {
+        console.error("獲取已實現損益失敗", e);
+    }
+}
+
+// 渲染已實現損益卡片
+function renderTodayRealizedPnl() {
+    const el = document.getElementById('today-realized-pnl');
+    const subtitleEl = document.getElementById('pnl-range-subtitle');
+    if (!el) return;
+
+    const val = state.todayRealizedPnl;
+    if (val === null || val === undefined) {
+        el.textContent = '--';
+        el.className = 'metric-value mask-money';
+        if (subtitleEl) subtitleEl.textContent = '今日實現損益合計 (TWD)';
+        return;
+    }
+
+    const prefix = val > 0 ? '+' : '';
+    el.textContent = `${prefix}${formatCurrency(val)}`;
+
+    if (val > 0) {
+        el.className = 'metric-value mask-money val-up';
+    } else if (val < 0) {
+        el.className = 'metric-value mask-money val-down';
+    } else {
+        el.className = 'metric-value mask-money';
+    }
+
+    if (subtitleEl) {
+        const todayStr = getLocalDateStr();
+        if (state.pnlStartDate === todayStr && state.pnlEndDate === todayStr) {
+            subtitleEl.textContent = '今日實現損益合計 (TWD)';
+        } else {
+            subtitleEl.textContent = `${state.pnlStartDate} ~ ${state.pnlEndDate} 實現損益合計 (TWD)`;
+        }
+    }
+}
+
+// Demo 模式下依據日期區間計算模擬損益
+function getDemoPnlForRange(startStr, endStr) {
+    let total = 0;
+    
+    // 1. 若區間內涵蓋今天，則加上當前模擬下單產生的已實現損益
+    const todayStr = getLocalDateStr();
+    if (todayStr >= startStr && todayStr <= endStr) {
+        total += demoState.todayRealizedPnl || 0;
+    }
+    
+    // 2. 加總月度歷史種子數據中落在該區間的項目
+    const monthlyList = demoProfitLoss(); // 取得近 12 個月 [ {date, pnl}, ... ]
+    monthlyList.forEach(item => {
+        // 月度的 date 通常是月中 15 號，若它落在 query 區間且不等於今天，則加總進去
+        if (item.date >= startStr && item.date <= endStr && item.date !== todayStr) {
+            total += item.pnl;
+        }
+    });
+    return total;
 }
 
 
@@ -4030,6 +4169,7 @@ const demoState = {
     tradeLogs: [],     // v1.7 假委託紀錄（demo 下單成功時 unshift，上限 99）
     pendingOrders: [], // v1.7 假未成交委託（與真實 /order/trades 回傳同構）
     cancelledIds: new Set(), // v1.7.1 已刪單號（模擬成交 timer 據此放棄成交）
+    todayRealizedPnl: 0,     // Demo 模式下今日模擬已實現損益累計
 };
 
 function mockResponse(data, status = 200) {
@@ -4420,9 +4560,13 @@ function demoPlaceOrder(bodyText) {
         } else {
             demoState.balance = Math.round(demoState.balance + price * shares);
             const pos = demoState.positions.find(p => p.code === code);
-            pos.shares -= shares;
-            if (pos.shares <= 0) {
-                demoState.positions = demoState.positions.filter(p => p.code !== code);
+            if (pos) {
+                const tradePnl = Math.round((price - pos.avg) * shares);
+                demoState.todayRealizedPnl = (demoState.todayRealizedPnl || 0) + tradePnl;
+                pos.shares -= shares;
+                if (pos.shares <= 0) {
+                    demoState.positions = demoState.positions.filter(p => p.code !== code);
+                }
             }
         }
 
@@ -4430,6 +4574,10 @@ function demoPlaceOrder(bodyText) {
         showToastNotification(`[DEMO 模式] 委託 ${orderId} 已成交：${action === 'Buy' ? '買進' : '賣出'} ${code} ${shares.toLocaleString()} 股 @ ${formatDecimal(price, 2)}`);
         _fetchCount = 0;  // 讓下一輪 fetchData 立即執行帳務 API（更新餘額/庫存/交割款）
         fetchData();
+        const stockAcc = state.accounts.find(a => a.account_type === 'S');
+        if (stockAcc) {
+            fetchTodayRealizedPnl(stockAcc);
+        }
     }, 1000 + Math.random() * 1000);
 
     return mockResponse({ order: { id: orderId, price, quantity: so.quantity }, status: { status: 'PendingSubmit' } });
@@ -4450,7 +4598,18 @@ async function smartFetch(url, options = {}) {
         if (url.includes('/portfolio/trading_limits')) return mockResponse({ trading_limit: 5000000, trading_used: 850000, trading_available: 4150000 });
         if (url.includes('/portfolio/position_unit')) return mockResponse(demoPositions());
         if (url.includes('/portfolio/settlements')) return mockResponse(demoSettlements());
-        if (url.includes('/portfolio/profit_loss')) return mockResponse(demoProfitLoss());
+        if (url.includes('/portfolio/profit_loss')) {
+            try {
+                const parsedBody = JSON.parse(body || '{}');
+                if (parsedBody.begin_date && parsedBody.end_date) {
+                    const mockPnl = getDemoPnlForRange(parsedBody.begin_date, parsedBody.end_date);
+                    return mockResponse([{ date: parsedBody.begin_date, pnl: mockPnl }]);
+                }
+            } catch (e) {
+                // Ignore and fallback
+            }
+            return mockResponse(demoProfitLoss());
+        }
         if (url.includes('/data/snapshots')) return mockResponse(demoSnapshots(body));
         if (url.includes('/data/contracts/')) {
             const code = url.split('/data/contracts/')[1].split('?')[0];
