@@ -826,10 +826,21 @@ function initPnlDateRange() {
 
     startInput.value = todayStr;
     endInput.value = todayStr;
+    startInput.max = todayStr;
+    endInput.max = todayStr;
 
     const handleDateChange = async () => {
-        state.pnlStartDate = startInput.value;
-        state.pnlEndDate = endInput.value;
+        let startVal = startInput.value;
+        let endVal = endInput.value;
+
+        // 防呆：若開始日期大於結束日期，自動將結束日期拉齊至開始日期
+        if (startVal && endVal && startVal > endVal) {
+            endVal = startVal;
+            endInput.value = startVal;
+        }
+
+        state.pnlStartDate = startVal;
+        state.pnlEndDate = endVal;
         const stockAcc = state.accounts.find(a => a.account_type === 'S');
         if (stockAcc) {
             await fetchTodayRealizedPnl(stockAcc);
@@ -1097,6 +1108,13 @@ function renderTpsl() {
     const positions = state.stockPositions || [];
     document.getElementById('tpsl-positions-empty').style.display = positions.length === 0 ? '' : 'none';
     positions.forEach(pos => {
+        // [v1.9.3 優化] 真實模式且非 Demo 時，嘗試與自選股快照同步最新 Close 價作為現價，突破 60s 帳務限制
+        if (!state.demoMode) {
+            const watchItem = state.watchlist.find(w => w.code === pos.code);
+            if (watchItem && watchItem.close > 0) {
+                pos.last_price = watchItem.close;
+            }
+        }
         const shares = state.stockPositionUnit === 'Share' ? pos.quantity : pos.quantity * lotMultiplier(pos);
         const r = pct ? calcTpsl(pos.last_price, pos.price, shares, pct) : null;
         const tr = document.createElement('tr');
