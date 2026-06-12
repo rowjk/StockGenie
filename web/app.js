@@ -793,6 +793,8 @@ const STATUS_LABELS = {
     PartFilled: '部分成交', Filled: '完全成交', Cancelled: '已取消', Failed: '失敗', Inactive: '無效',
 };
 let _pendingOrdersTimer = null; // SSE debounce
+const _tradeStatusMap = {};          // v1.8.3 order_id → 最新委託狀態（來源 /order/trades，daemon 重啟後僅含當日單）
+let _lastTradeLogs = [];             // v1.8.3 最近一次委託紀錄（供狀態更新後重繪結果欄）
 const _seenPendingIds = new Set();   // v1.8.1 本次連線曾出現在未成交清單的單號
 const _selfCancelledIds = new Set(); // v1.8.1 使用者自行刪單/全減的單號（不警示）
 const _warnedDeadIds = new Set();    // v1.8.1 已警示過的死單（防重複）
@@ -827,6 +829,7 @@ async function fetchPendingOrders() {
         all.forEach(t => {
             const id = t && t.order && t.order.id;
             if (!id || !t.status) return;
+            _tradeStatusMap[id] = t.status.status; // v1.8.3 供委託紀錄「結果」欄 join
             if (PENDING_STATUSES.has(t.status.status)) {
                 _seenPendingIds.add(id);
             } else if ((t.status.status === 'Cancelled' || t.status.status === 'Failed')
@@ -841,6 +844,7 @@ async function fetchPendingOrders() {
             }
         });
         renderPendingOrders(pending);
+        renderTradeLogs(_lastTradeLogs); // v1.8.3 狀態更新後刷新紀錄結果欄
         const updatedEl = document.getElementById('pending-orders-updated');
         if (updatedEl) updatedEl.textContent = `更新於 ${new Date().toLocaleTimeString('en-GB')}`;
     } catch (e) {
@@ -1140,12 +1144,24 @@ function renderTradeLogs(logs) {
     const tbody = document.getElementById('trade-logs-tbody');
     const empty = document.getElementById('trade-logs-empty');
     if (!tbody) return;
+    if (Array.isArray(logs)) _lastTradeLogs = logs; else logs = _lastTradeLogs;
     tbody.innerHTML = '';
     const list = Array.isArray(logs) ? logs : [];
     empty.style.display = list.length === 0 ? '' : 'none';
     const TYPE_LABELS = { place: '下單', update_price: '改價', update_qty: '減量', cancel: '刪單' }; // 無 type 的舊紀錄視為下單
     const PT_LABELS = { LMT: '限價', MKT: '市價', MKP: '範圍市價' };
     const COND_LABELS = { Cash: '現股', MarginTrading: '融資', ShortSelling: '融券' };
+    // v1.8.3 結果欄：以單號 join 即時委託狀態（daemon 重啟前的歷史單查不到 → --）
+    const RESULT_LABELS = {
+        Filled:        ['已成交', 'val-up'],
+        PartFilled:    ['部分成交', 'val-up'],
+        Submitted:     ['委託中', ''],
+        PreSubmitted:  ['預約中', ''],
+        PendingSubmit: ['傳送中', ''],
+        Cancelled:     ['已取消', 'val-down'],
+        Failed:        ['失敗/遭拒', 'val-down'],
+        Inactive:      ['無效', 'val-down'],
+    };
     list.forEach(log => {
         const isBuy = log.action === 'Buy';
         const type = log.type || 'place';
@@ -1165,7 +1181,12 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.code || '--'}</td>
             <td class="mono mask-money">${priceCell}</td>
             <td class="mono mask-money">${qtyCell}</td>
-            <td class="mono">${log.order_id || '--'}</td>`;
+            <td class="mono">${log.order_id || '--'}</td>
+            ${(() => {
+                const st = _tradeStatusMap[log.order_id];
+                const r = st && RESULT_LABELS[st];
+                return r ? `<td class="${r[1]}">${r[0]}</td>` : '<td style="color:var(--text-muted)">--</td>';
+            })()}`;
         tbody.appendChild(tr);
     });
 }
