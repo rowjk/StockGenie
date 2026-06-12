@@ -661,6 +661,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             "price": so.get("price", 0),
                             "quantity": so.get("quantity", 0),
                             "order_lot": so.get("order_lot", ""),
+                            "price_type": so.get("price_type", ""),   # v1.8.2 LMT/MKT/MKP
+                            "order_cond": so.get("order_cond", ""),   # v1.8.2 Cash/MarginTrading/ShortSelling
                         })
                     except Exception as log_err:
                         print(f"\033[93m⚠ 委託紀錄寫入失敗（不影響下單）：{log_err}\033[0m")

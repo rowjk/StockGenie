@@ -1144,6 +1144,8 @@ function renderTradeLogs(logs) {
     const list = Array.isArray(logs) ? logs : [];
     empty.style.display = list.length === 0 ? '' : 'none';
     const TYPE_LABELS = { place: '下單', update_price: '改價', update_qty: '減量', cancel: '刪單' }; // 無 type 的舊紀錄視為下單
+    const PT_LABELS = { LMT: '限價', MKT: '市價', MKP: '範圍市價' };
+    const COND_LABELS = { Cash: '現股', MarginTrading: '融資', ShortSelling: '融券' };
     list.forEach(log => {
         const isBuy = log.action === 'Buy';
         const type = log.type || 'place';
@@ -1159,6 +1161,7 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.ts || '--'}</td>
             <td style="color:${typeColor}">${TYPE_LABELS[type] || type}</td>
             <td class="${isBuy ? 'val-up' : 'val-down'}">${log.action ? (isBuy ? '買進' : '賣出') : '--'}</td>
+            <td>${log.price_type ? `${PT_LABELS[log.price_type] || log.price_type} ${COND_LABELS[log.order_cond] || ''}`.trim() : '--'}</td>
             <td class="mono">${log.code || '--'}</td>
             <td class="mono mask-money">${priceCell}</td>
             <td class="mono mask-money">${qtyCell}</td>
@@ -4247,6 +4250,8 @@ function demoPlaceOrder(bodyText) {
         price,
         quantity: so.quantity,
         order_lot: so.order_lot || 'Common',
+        price_type: so.price_type || 'LMT',
+        order_cond: so.order_cond || 'Cash',
     });
     demoState.tradeLogs = demoState.tradeLogs.slice(0, 99);
 
