@@ -2014,6 +2014,66 @@ async function renderDetailMAChart(code) {
     }
 }
 
+// ── v1.9.0 下單面板市價與漲跌幅防呆 ─────────────────────────────────────
+let _drawerMarket = { code: '', last: 0, ref: 0, limitUp: 0, limitDown: 0 };
+
+async function refreshDrawerMarket(code, exchange, fallbackLast) {
+    _drawerMarket = { code, last: fallbackLast || 0, ref: 0, limitUp: 0, limitDown: 0 };
+    const infoEl = document.getElementById('order-market-info');
+    if (infoEl) infoEl.textContent = '市價查詢中...';
+    try {
+        const [cResp, sResp] = await Promise.allSettled([
+            smartFetch(`${API_BASE}/data/contracts/${encodeURIComponent(code)}?security_type=STK`),
+            smartFetch(`${API_BASE}/data/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contracts: [{ security_type: 'STK', exchange: exchange || 'TSE', code }] })
+            }),
+        ]);
+        if (_drawerMarket.code !== code) return; // 期間已切換商品
+        if (cResp.status === 'fulfilled' && cResp.value.ok) {
+            const c = await cResp.value.json();
+            _drawerMarket.ref = Number(c.reference) || 0;
+            _drawerMarket.limitUp = Number(c.limit_up) || 0;
+            _drawerMarket.limitDown = Number(c.limit_down) || 0;
+        }
+        if (sResp.status === 'fulfilled' && sResp.value.ok) {
+            const snaps = await sResp.value.json();
+            const close = Array.isArray(snaps) && snaps[0] && Number(snaps[0].close);
+            if (close > 0) _drawerMarket.last = close;
+        }
+    } catch (e) {
+        console.error('查詢市價/漲跌幅失敗', e);
+    }
+    renderDrawerMarket();
+    validateOrderPrice();
+}
+
+function renderDrawerMarket() {
+    const el = document.getElementById('order-market-info');
+    if (!el) return;
+    const m = _drawerMarket;
+    const parts = [`市價 ${m.last > 0 ? formatDecimal(m.last, 2) : '--'}`];
+    if (m.limitUp > 0) parts.push(`漲停 ${formatDecimal(m.limitUp, 2)}`);
+    if (m.limitDown > 0) parts.push(`跌停 ${formatDecimal(m.limitDown, 2)}`);
+    el.textContent = parts.join(' ｜ ');
+}
+
+// 回傳 true = 價格可送出（限價且超出漲跌幅 → false；漲跌幅未知或市價單 → 不擋）
+function validateOrderPrice() {
+    const warnEl = document.getElementById('order-price-warning');
+    const price = parseFloat(document.getElementById('order-price').value);
+    const isLMT = document.getElementById('order-price-type').value === 'LMT';
+    const m = _drawerMarket;
+    const known = m.limitUp > 0 && m.limitDown > 0;
+    const out = isLMT && known && price > 0 && (price > m.limitUp || price < m.limitDown);
+    if (warnEl) {
+        warnEl.style.display = out ? '' : 'none';
+        if (out) warnEl.textContent = `價格超過漲跌幅範圍（${formatDecimal(m.limitDown, 2)} ~ ${formatDecimal(m.limitUp, 2)}）`;
+    }
+    return !out;
+}
+
 // ── 下單預估金額試算（v1.7：純前端，未含手續費及交易稅） ────────────────
 function calcOrderAmount(price, qty, lotType) {
     if (isNaN(price) || isNaN(qty) || price <= 0 || qty <= 0) return null;
@@ -2036,6 +2096,7 @@ function updateOrderEstimate() {
         document.getElementById('order-price-type').value === 'MKT'
             ? '市價單以輸入價估算，僅供參考（未含費用）'
             : '未含手續費及交易稅';
+    validateOrderPrice(); // v1.9 漲跌幅即時防呆
 }
 
 // ── 系統設定（Config Update）隱藏下單抽屜 ──────────────────────────────
@@ -2087,6 +2148,10 @@ async function initDrawerControls() {
         }
         if (!qtyInput || isNaN(qtyInput) || parseInt(qtyInput) <= 0) {
             alert("請輸入有效的委託數量。");
+            return;
+        }
+        if (priceType === 'LMT' && !validateOrderPrice()) {
+            alert(`委託價格超過漲跌幅範圍（跌停 ${formatDecimal(_drawerMarket.limitDown, 2)} ~ 漲停 ${formatDecimal(_drawerMarket.limitUp, 2)}），請修正後再送出。`);
             return;
         }
         
@@ -2204,6 +2269,7 @@ function openOrderDrawer(code, type, lastPrice, exchange) {
     document.getElementById('order-qty').value = '1';
     document.getElementById('order-lot').value = 'Common';
     document.getElementById('order-price-type').value = 'LMT'; // v1.8.9 防呆：每次開啟重設為限價（市價須刻意選取，避免上次殘留誤下市價單）
+    refreshDrawerMarket(code, state.drawerExchange, lastPrice); // v1.9 抓當下市價與漲跌幅
     updateOrderEstimate(); // 帶入預設值後即顯示預估金額（v1.7）
 
     // 開啟抽屜滑出
@@ -4373,7 +4439,9 @@ async function smartFetch(url, options = {}) {
         if (url.includes('/data/snapshots')) return mockResponse(demoSnapshots(body));
         if (url.includes('/data/contracts/')) {
             const code = url.split('/data/contracts/')[1].split('?')[0];
-            return mockResponse({ code, name: demoName(code), exchange: 'TSE', reference: demoQuote(code).ref });
+            const ref = demoQuote(code).ref;
+            return mockResponse({ code, name: demoName(code), exchange: 'TSE', reference: ref,
+                limit_up: Math.round(ref * 1.1 * 100) / 100, limit_down: Math.round(ref * 0.9 * 100) / 100 });
         }
         if (url.includes('/data/kbars')) {
             let code = '';

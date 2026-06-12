@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>StockGenie</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=1.8.9">
+    <link rel="stylesheet" href="style.css?v=1.9.0">
 </head>
 <body>
     <div class="app-container">
@@ -785,7 +785,7 @@
                 <!-- ── App Footer (Stealth) ── -->
                 <footer class="app-footer">
                     <span>© 2026 StockGenie。版權所有。</span>
-                    <span>版本號: v1.8.9</span>
+                    <span>版本號: v1.9.0</span>
                     <span>作者: JamesWu</span>
                 </footer>
             </div>
@@ -854,6 +854,8 @@
             <div class="form-group">
                 <span class="form-label">委託價格</span>
                 <input type="number" step="0.01" class="form-input mono" id="order-price" placeholder="輸入委託價格">
+                <span class="metric-subtitle mono mask-money" id="order-market-info">市價 --</span>
+                <span class="est-hint val-down" id="order-price-warning" style="display: none;">價格超過漲跌幅範圍</span>
             </div>
 
             <div class="form-group">
