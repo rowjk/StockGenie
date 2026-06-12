@@ -5,7 +5,9 @@
 ## 檔案結構
 
 * `dashboard.py`：後端。靜態服務、`/proxy/` 反向代理（profit_loss 自動補 365 天、帳務端點 30s 等待）、`/api/asset-history`（匯入嚴格校驗 + .bak 備份）、`/api/twse-*`、`/api/us-chart`、`/api/credentials`（v1.6 多組金鑰管理）、Shioaji 子進程生命週期管理。
-* `web/index.html` / `web/style.css` / `web/app.js`：前端（原生 JS + Canvas，無第三方依賴）。`smartFetch` 統一網路收口（v1.6）。
+* `web/index.html` / `web/style.css`：前端（原生 JS + Canvas，無第三方依賴）。
+* `web/app.js`（核心）/ `web/us-market.js`（美股）/ `web/credentials.js`（金鑰管理）/ `web/demo.js`（Demo 模式 + `smartFetch` 統一網路收口）：v1.10.0 拆分，普通 script 依序載入共用全域。
+* `tests/test_dashboard.py`：後端純邏輯單元測試（權限/同源白名單/匯入校驗/遮蔽/民國日期/美股代碼）。執行：`python -m unittest discover tests`。
 * `啟動儀表板.bat`：一鍵啟動。`持倉監控.bat` / `monitor.py`：獨立控制台持倉監控（讀 `.env`）。`sdk_probe.py`：SDK 層帳務診斷（區分本機 vs 永豐後台問題）。
 * `credentials.json`（gitignore）：多組 API 金鑰設定檔。`asset_history.json`：每日資產歷史。
 
@@ -17,11 +19,18 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**（目前 `v1.9.3`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.10.0`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
+
+## 安全性
+
+* **同源防護（v1.10.0）**：8081 不再回應 CORS header，且全部請求校驗 `Host`（防 DNS rebinding）與 `Origin`（防跨站下單 CSRF），白名單僅 `127.0.0.1:8081` / `localhost:8081`。`Origin` 缺席（curl / 本機腳本）放行。
+* **唯讀金鑰清單**：`.env` 的 `READ_ONLY_API_KEYS`（逗號分隔），清單內 API Key 一律禁止下單（不再硬編碼於原始碼）。
+* **殘餘風險（無法由本專案修補）**：`shioaji.exe` 守護進程（Port 8080）為官方執行檔，無 Origin 驗證；瀏覽器中的惡意網頁理論上可繞過 8081 直打 8080 下單。緩解：不用時關閉儀表板、瀏覽器勿長期掛載不明網站、必要時以防火牆限制 8080 僅允許本機進程。
 
 ## 版本紀錄
 
+* **v1.10.0**（2026-06-12）：安全強化與工程品質版。封堵跨站下單漏洞（移除 `Access-Control-Allow-Origin: *`，新增 Host/Origin 同源校驗，前端 API base 改 `location.origin`）；唯讀金鑰移至 `.env` `READ_ONLY_API_KEYS` 並統一權限判斷為 `evaluate_trade_permission()`（proxy 攔截與 `/api/trade-permission` 共用）；`_kill_shioaji_on_port` 收窄誤殺範圍（僅殺 shioaji，身分不明一律不殺）；credentials 讀改寫加鎖防併發競態；`handle_post_history` 防缺 Content-Length；`app.js` 拆分為 app / us-market / credentials / demo 四檔（零語意變更，普通 script 依序載入）；新增 `tests/test_dashboard.py` 21 項後端單元測試；修復損毀的 git index 並自遠端還原被截斷的工作目錄檔案。
 * **v1.9.3**（2026-06-12）：優化真實模式下「停利停損試算」卡片價格同步——自動從自選股快照同步 Close 價，突破 60 秒帳務輪詢限制；優化已實現損益查詢日期選擇器——限制最大可選日期為今日，且增加區間交叉防呆（開始大於結束時自動拉齊）。
 * **v1.9.2**（2026-06-12）：新增儀表板「已實現損益查詢」卡片。支援自訂起訖日期範圍查詢（預設系統當日）、資訊總覽卡片自訂顯示（持久化於 localStorage）、Boss Key 隱私遮蔽，且在 Demo 模式下提供模擬賣出交易之實現損益累加與高擬真區間加總模擬。
 * **v1.9.1**（2026-06-12）：優化下單安全防呆——當價格類型切換為「市價 (MKT)」時，自動將委託價格欄位鎖定（disabled）並帶入當前市價；委託數量欄位限制必須為正整數，防止小數價格誤輸入於數量欄位。

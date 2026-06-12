@@ -30,6 +30,17 @@ CREDENTIALS_FILE = WORKSPACE_DIR / "credentials.json"
 ENV_FILE = WORKSPACE_DIR / ".env"
 VERIFICATION_CODE = "PEA6"  # 變更設定的二次安全驗證碼（防肉眼窺視，非防本機抓包）
 
+# ── v1.10.0 同源防護（CSRF / DNS rebinding）──────────────────────────────
+# 8081 過去回應 Access-Control-Allow-Origin: * 且無任何來源驗證，瀏覽器中任意
+# 網頁皆可直接 POST /proxy/api/v1/order/place_order 下單。前端與本伺服器同源，
+# 根本不需要 CORS；改為全面校驗 Host（防 DNS rebinding）與 Origin（防跨站請求）。
+# Origin 缺席代表非瀏覽器請求（curl / 本機腳本），予以放行。
+# ※ 殘餘風險：shioaji.exe 守護進程（Port 8080）非本專案程式碼，無法加上同樣
+#   防護；惡意網頁仍可繞過 8081 直打 8080。詳見 README 安全性章節。
+WEB_PORT = 8081
+ALLOWED_HOSTS = {f"127.0.0.1:{WEB_PORT}", f"localhost:{WEB_PORT}"}
+ALLOWED_ORIGINS = {f"http://{h}" for h in ALLOWED_HOSTS}
+
 # Shioaji 守護進程全域引用（由 start_shioaji_server 管理；lock 防併發重啟）
 shioaji_proc = None
 shioaji_proc_lock = threading.Lock()
@@ -278,6 +289,22 @@ def load_env():
                 env[key.strip()] = val.strip()
     return env
 
+def evaluate_trade_permission(env):
+    """下單權限判斷（v1.10.0 統一收口：proxy 攔截與 /api/trade-permission 共用）。
+
+    唯讀金鑰清單自 .env 的 READ_ONLY_API_KEYS 讀取（逗號分隔），不再硬編碼於原始碼。
+    回傳 (trading_permitted: bool, reason: str)。
+    """
+    read_only_keys = {k.strip() for k in env.get("READ_ONLY_API_KEYS", "").split(",") if k.strip()}
+    api_key = env.get("API_KEY", "")
+    if env.get("TRADING_ENABLED", "").lower() == "false":
+        return False, "TRADING_ENABLED=false in config"
+    if api_key in read_only_keys:
+        return False, "API Key is read-only"
+    if not env.get("CA_CERT_PATH") or not env.get("CA_PASSWORD"):
+        return False, "CA cert not configured"
+    return True, ""
+
 def resolve_shioaji_bin():
     # 1. Check if shioaji is on system PATH
     shioaji_bin = shutil.which("shioaji")
@@ -307,6 +334,8 @@ def resolve_shioaji_bin():
     raise FileNotFoundError("找不到 shioaji.exe 執行檔。請確認 shioaji 已正確安裝。")
 
 # ── 多組 API 金鑰設定檔管理 (credentials.json) ────────────────────────────
+# v1.10.0：ThreadingHTTPServer 多執行緒處理請求，load→modify→save 需互斥
+credentials_lock = threading.Lock()
 MASK_TOKENS = ("...", "●", "*")
 
 def is_masked_value(val):
@@ -411,7 +440,12 @@ def _wait_port_released(host="127.0.0.1", port=8080, timeout=5.0):
     return False
 
 def _kill_shioaji_on_port(port=8080):
-    """尋找並強制結束佔用 Port 8080 的 shioaji 進程（防範前次異常殘留的進程阻礙重啟）。"""
+    """尋找並強制結束佔用 Port 8080 的殘留 shioaji 進程。
+
+    v1.10.0 收窄誤殺範圍：僅結束進程名含 shioaji 者。先前版本連「python」也殺、
+    且 tasklist 查詢失敗時盲殺任意 PID——若使用者其他 Python 服務恰巧佔用 8080
+    會被誤殺。現在無法確認身分時一律不殺（寧可啟動失敗也不誤殺別人的進程）。
+    """
     import subprocess
     try:
         # 僅適用於 Windows
@@ -424,17 +458,19 @@ def _kill_shioaji_on_port(port=8080):
             parts = line.split()
             if len(parts) >= 5 and ('LISTENING' in parts or 'LISTEN' in parts):
                 pids.add(parts[-1])
-        
+
         for pid in pids:
-            # 檢查是否為 shioaji.exe 或 python 進程
             try:
                 proc_info = subprocess.check_output(f'tasklist /FI "PID eq {pid}"', shell=True).decode('utf-8', errors='ignore')
-                if "shioaji" in proc_info.lower() or "python" in proc_info.lower():
-                    print(f"\033[93m⚠ 偵測到殘留的 Shioaji/Python 進程 (PID: {pid}) 佔用 Port {port}，強制結束中...\033[0m")
-                    subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                # 備用方案：直接嘗試 taskkill
+            except Exception as e:
+                print(f"\033[93m⚠ 無法確認 PID {pid} 的進程身分（{e}），跳過不結束。\033[0m")
+                continue
+            if "shioaji" in proc_info.lower():
+                print(f"\033[93m⚠ 偵測到殘留的 Shioaji 進程 (PID: {pid}) 佔用 Port {port}，強制結束中...\033[0m")
                 subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                print(f"\033[93m⚠ Port {port} 由非 shioaji 進程佔用 (PID: {pid})，不予結束；"
+                      f"若 Shioaji 啟動失敗請手動處理。\033[0m")
     except Exception as e:
         print(f"嘗試清除 Port {port} 殘留進程時發生錯誤: {e}")
 
@@ -515,10 +551,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
     def end_headers(self):
-        # Add CORS headers
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        # v1.10.0：前端與本伺服器同源，不送任何 CORS header（跨來源讀取一律被瀏覽器封鎖）
         # Disable caching for frontend development/realtime updates
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         self.send_header('Pragma', 'no-cache')
@@ -535,11 +568,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"發送 JSON 錯誤時發生異常: {e}")
 
+    def _reject_cross_origin(self):
+        """v1.10.0 同源校驗；不通過時回 403 並回傳 True（呼叫端應立即 return）。
+
+        - Host 不在白名單 → 擋（DNS rebinding：evil.com 解析到 127.0.0.1 時 Host 仍是 evil.com）
+        - Origin 存在且不在白名單 → 擋（跨站 POST：瀏覽器對跨來源請求必帶 Origin）
+        - Origin 缺席 → 放行（同源 GET / curl / 本機腳本）
+        """
+        host = self.headers.get('Host', '')
+        origin = self.headers.get('Origin')
+        if host not in ALLOWED_HOSTS or (origin and origin not in ALLOWED_ORIGINS):
+            print(f"\033[91m✖ 已封鎖跨來源請求 [{self.command} {self.path}] "
+                  f"Host={host!r} Origin={origin!r}\033[0m")
+            self.send_json_error(403, "Forbidden: cross-origin request blocked")
+            return True
+        return False
+
     def do_OPTIONS(self):
+        if self._reject_cross_origin():
+            return
         self.send_response(200)
         self.end_headers()
 
     def do_GET(self):
+        if self._reject_cross_origin():
+            return
         if self.path.startswith('/proxy/'):
             self.handle_proxy_request("GET")
         elif self.path == '/api/asset-history':
@@ -560,6 +613,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
+        if self._reject_cross_origin():
+            return
         if self.path.startswith('/proxy/'):
             self.handle_proxy_request("POST")
         elif self.path == '/api/asset-history/import':
@@ -576,6 +631,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def do_DELETE(self):
+        if self._reject_cross_origin():
+            return
         if self.path.startswith('/proxy/'):
             self.handle_proxy_request("DELETE")
         elif self.path.startswith('/api/asset-history/'):
@@ -598,18 +655,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         ORDER_MUTATION_PATHS = ("api/v1/order/place_order", "api/v1/order/update_price", "api/v1/order/update_qty")
         if method == "POST" and rel_path in ORDER_MUTATION_PATHS:
             try:
-                env = load_env()
-                read_only_keys = {"HBUcuTmf3ZHa96vcVbhfCYUmtwQtofTHq9HJ2YRh64T"}
-                api_key = env.get("API_KEY", "")
-                
-                trading_permitted = True
-                if env.get("TRADING_ENABLED", "").lower() == "false":
-                    trading_permitted = False
-                elif api_key in read_only_keys:
-                    trading_permitted = False
-                elif not env.get("CA_CERT_PATH") or not env.get("CA_PASSWORD"):
-                    trading_permitted = False
-                
+                trading_permitted, _ = evaluate_trade_permission(load_env())
                 if not trading_permitted:
                     self.send_json_error(400, "下單權限關閉")
                     return
@@ -742,23 +788,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def handle_get_trade_permission(self):
         try:
-            env = load_env()
-            read_only_keys = {"HBUcuTmf3ZHa96vcVbhfCYUmtwQtofTHq9HJ2YRh64T"}
-            api_key = env.get("API_KEY", "")
-            
-            trading_permitted = True
-            reason = ""
-            
-            if env.get("TRADING_ENABLED", "").lower() == "false":
-                trading_permitted = False
-                reason = "TRADING_ENABLED=false in config"
-            elif api_key in read_only_keys:
-                trading_permitted = False
-                reason = "API Key is read-only"
-            elif not env.get("CA_CERT_PATH") or not env.get("CA_PASSWORD"):
-                trading_permitted = False
-                reason = "CA cert not configured"
-                
+            trading_permitted, reason = evaluate_trade_permission(load_env())
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -787,7 +817,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def handle_get_credentials(self):
         try:
-            db = load_credentials()
+            with credentials_lock:
+                db = load_credentials()
             masked = [{
                 "name": p.get("name", ""),
                 "api_key": mask_api_key(p.get("api_key", "")),
@@ -817,40 +848,41 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not name:
                 self.send_json_error(400, "名稱不可為空")
                 return
-            db = load_credentials()
-            profiles = db["profiles"]
-            if isinstance(index, int) and 0 <= index < len(profiles):
-                # 修改既有設定檔；遮蔽格式或空值代表未變更，保留原值
-                profile = profiles[index]
-                profile["name"] = name
-                profile["ca_cert_path"] = ca_path
-                if api_key and not is_masked_value(api_key):
-                    profile["api_key"] = api_key
-                if secret_key and not is_masked_value(secret_key):
-                    profile["secret_key"] = secret_key
-                if ca_pass and not is_masked_value(ca_pass):
-                    profile["ca_password"] = ca_pass
-            else:
-                # 新增設定檔：金鑰必填且不可為遮蔽格式
-                if not api_key or is_masked_value(api_key):
-                    self.send_json_error(400, "無效的 API Key")
-                    return
-                if not secret_key or is_masked_value(secret_key):
-                    self.send_json_error(400, "無效的 Secret Key")
-                    return
-                profiles.append({
-                    "name": name,
-                    "api_key": api_key,
-                    "secret_key": secret_key,
-                    "ca_cert_path": ca_path,
-                    "ca_password": "" if is_masked_value(ca_pass) else ca_pass,
-                })
-                index = len(profiles) - 1
-            save_credentials(db)
-            restarting = (index == db["active_index"])
-            if restarting:
-                # 更新的是啟用中設定 → 熱套用（寫 .env + 背景重啟）
-                apply_active_profile(db)
+            with credentials_lock:
+                db = load_credentials()
+                profiles = db["profiles"]
+                if isinstance(index, int) and 0 <= index < len(profiles):
+                    # 修改既有設定檔；遮蔽格式或空值代表未變更，保留原值
+                    profile = profiles[index]
+                    profile["name"] = name
+                    profile["ca_cert_path"] = ca_path
+                    if api_key and not is_masked_value(api_key):
+                        profile["api_key"] = api_key
+                    if secret_key and not is_masked_value(secret_key):
+                        profile["secret_key"] = secret_key
+                    if ca_pass and not is_masked_value(ca_pass):
+                        profile["ca_password"] = ca_pass
+                else:
+                    # 新增設定檔：金鑰必填且不可為遮蔽格式
+                    if not api_key or is_masked_value(api_key):
+                        self.send_json_error(400, "無效的 API Key")
+                        return
+                    if not secret_key or is_masked_value(secret_key):
+                        self.send_json_error(400, "無效的 Secret Key")
+                        return
+                    profiles.append({
+                        "name": name,
+                        "api_key": api_key,
+                        "secret_key": secret_key,
+                        "ca_cert_path": ca_path,
+                        "ca_password": "" if is_masked_value(ca_pass) else ca_pass,
+                    })
+                    index = len(profiles) - 1
+                save_credentials(db)
+                restarting = (index == db["active_index"])
+                if restarting:
+                    # 更新的是啟用中設定 → 熱套用（寫 .env + 背景重啟）
+                    apply_active_profile(db)
             self._send_json({"ok": True, "index": index, "restarting": restarting})
         except Exception as e:
             self.send_json_error(500, f"儲存設定檔失敗: {e}")
@@ -865,13 +897,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
         try:
             index = body.get("index")
-            db = load_credentials()
-            if not isinstance(index, int) or not (0 <= index < len(db["profiles"])):
-                self.send_json_error(400, "無效的設定檔索引")
-                return
-            db["active_index"] = index
-            save_credentials(db)
-            apply_active_profile(db)
+            with credentials_lock:
+                db = load_credentials()
+                if not isinstance(index, int) or not (0 <= index < len(db["profiles"])):
+                    self.send_json_error(400, "無效的設定檔索引")
+                    return
+                db["active_index"] = index
+                save_credentials(db)
+                apply_active_profile(db)
             self._send_json({"ok": True, "active_index": index, "restarting": True})
         except Exception as e:
             self.send_json_error(500, f"切換設定檔失敗: {e}")
@@ -886,21 +919,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
         try:
             index = body.get("index")
-            db = load_credentials()
-            profiles = db["profiles"]
-            if not isinstance(index, int) or not (0 <= index < len(profiles)):
-                self.send_json_error(400, "無效的設定檔索引")
-                return
-            if len(profiles) <= 1:
-                self.send_json_error(400, "不可刪除最後一組設定檔")
-                return
-            if index == db["active_index"]:
-                self.send_json_error(400, "不可刪除啟用中的設定檔，請先切換至其他設定檔")
-                return
-            profiles.pop(index)
-            if index < db["active_index"]:
-                db["active_index"] -= 1
-            save_credentials(db)
+            with credentials_lock:
+                db = load_credentials()
+                profiles = db["profiles"]
+                if not isinstance(index, int) or not (0 <= index < len(profiles)):
+                    self.send_json_error(400, "無效的設定檔索引")
+                    return
+                if len(profiles) <= 1:
+                    self.send_json_error(400, "不可刪除最後一組設定檔")
+                    return
+                if index == db["active_index"]:
+                    self.send_json_error(400, "不可刪除啟用中的設定檔，請先切換至其他設定檔")
+                    return
+                profiles.pop(index)
+                if index < db["active_index"]:
+                    db["active_index"] -= 1
+                save_credentials(db)
             self._send_json({"ok": True, "active_index": db["active_index"]})
         except Exception as e:
             self.send_json_error(500, f"刪除設定檔失敗: {e}")
@@ -1071,7 +1105,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(history).encode('utf-8'))
 
     def handle_post_history(self):
-        content_length = int(self.headers['Content-Length'])
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            self.send_error(400, "Bad Request: missing body")
+            return
         post_data = self.rfile.read(content_length)
         try:
             data = json.loads(post_data.decode('utf-8'))
