@@ -794,6 +794,7 @@ const STATUS_LABELS = {
 };
 let _pendingOrdersTimer = null; // SSE debounce
 const _tradeStatusMap = {};          // v1.8.3 order_id → 最新委託狀態（來源 /order/trades，daemon 重啟後僅含當日單）
+const _tradeSeqnoMap = {};           // v1.8.7 order_id → seqno（舊紀錄未存 seqno 時動態補顯）
 let _lastTradeLogs = [];             // v1.8.3 最近一次委託紀錄（供狀態更新後重繪結果欄）
 const _seenPendingIds = new Set();   // v1.8.1 本次連線曾出現在未成交清單的單號
 const _selfCancelledIds = new Set(); // v1.8.1 使用者自行刪單/全減的單號（不警示）
@@ -840,6 +841,7 @@ async function fetchPendingOrders() {
         deduped.forEach(t => {
             const id = t.order.id;
             _tradeStatusMap[id] = t.status.status; // v1.8.3 供委託紀錄「結果」欄 join
+            if (String(t.order.seqno || '').trim()) _tradeSeqnoMap[id] = String(t.order.seqno).trim(); // v1.8.7
             if (PENDING_STATUSES.has(t.status.status)) {
                 _seenPendingIds.add(id);
             } else if ((t.status.status === 'Cancelled' || t.status.status === 'Failed')
@@ -1195,7 +1197,7 @@ function renderTradeLogs(logs) {
             <td class="mono">${log.code || '--'}</td>
             <td class="mono mask-money">${priceCell}</td>
             <td class="mono mask-money">${qtyCell}</td>
-            <td class="mono" title="${log.order_id || ''}">${log.seqno || log.order_id || '--'}</td>
+            <td class="mono" title="${log.order_id || ''}">${log.seqno || _tradeSeqnoMap[log.order_id] || log.order_id || '--'}</td>
             ${(() => {
                 const st = _tradeStatusMap[log.order_id];
                 const r = st && RESULT_LABELS[st];

@@ -17,11 +17,12 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**（目前 `v1.8.6`）：`index.html` footer + 本 README 版本紀錄。
+* 任何程式修改**必須同步更新版本號**（目前 `v1.8.7`）：`index.html` footer + 本 README 版本紀錄。
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 版本紀錄
 
+* **v1.8.7**（2026-06-12）：舊委託紀錄的單號也能對上券商 App——以 order_id 動態對照當日 `/order/trades` 的 seqno 補顯（daemon 查得到就顯示流水號，查不到才退回內部 id）。
 * **v1.8.6**（2026-06-12）：單號顯示與券商 App 一致——委託紀錄/管理 Modal/toast 一律優先顯示 `seqno`（流水序號，即 App 的委託單號），shioaji 內部 id 退居 hover title 與舊紀錄 fallback；後端紀錄與 X-Log-Info 補存 seqno；Demo 同步模擬流水號。
 * **v1.8.5**（2026-06-12）：減量語意實測定案修正——daemon 的 `order_quantity` 已是淨額（扣除減量後的有效量），有效量計算不再重複扣 `cancel_quantity`（修正減量後委託量誤顯示為 0、無法二次減量）；Demo 減量行為同步對齊。
 * **v1.8.4**（2026-06-12）：修正同一單號雙紀錄問題（預約單於開盤轉送後，daemon 同時保留「預約階段（無委託書號）」與「交易所階段（有 ordno）」兩筆）——未成交清單與結果欄一律以有委託書號者優先去重，避免活單被預約殘影標成 Failed。
