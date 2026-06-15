@@ -2164,6 +2164,7 @@ async function renderDetailMAChart(code) {
         const toY = v => h - 20 - ((v - minY) / rangeY) * (h - 28);
 
         const theme = document.documentElement.getAttribute('data-theme');
+        const scheme = document.documentElement.getAttribute('data-scheme');
 
         // 收盤價細線（底層，灰色）
         ctx.beginPath();
@@ -2175,7 +2176,22 @@ async function renderDetailMAChart(code) {
         // 四條 MA 線
         mas.forEach(ma => {
             ctx.beginPath();
-            ctx.strokeStyle = ma.color;
+            
+            let lineColor = ma.color;
+            if (scheme === 'stealth') {
+                if (theme === 'dark') {
+                    const grayMap = { 5: '#f8fafc', 20: '#cbd5e1', 60: '#64748b', 240: '#475569' };
+                    lineColor = grayMap[ma.period] || '#94a3b8';
+                } else {
+                    const grayMap = { 5: '#0f172a', 20: '#475569', 60: '#94a3b8', 240: '#cbd5e1' };
+                    lineColor = grayMap[ma.period] || '#64748b';
+                }
+            } else if (scheme === 'matrix') {
+                const greenMap = { 5: '#00ff41', 20: '#00cc33', 60: '#009922', 240: '#006611' };
+                lineColor = greenMap[ma.period] || '#00ff41';
+            }
+            
+            ctx.strokeStyle = lineColor;
             ctx.lineWidth = 1.6;
             let started = false;
             ma.values.forEach((v, i) => {
@@ -2193,9 +2209,9 @@ async function renderDetailMAChart(code) {
         ctx.fillText(`高 ${formatDecimal(Math.max(...closes), 2)}`, w - 5, 14);
         ctx.fillText(`低 ${formatDecimal(Math.min(...closes), 2)}`, w - 5, h - 6);
 
-        // 圖例
+        // 圖例 (使用 CSS 樣式類別以符合隱形黑白/駭客任務模式)
         legendEl.innerHTML = MA_DEFS.map(d =>
-            `<span style="color:${d.color};font-size:0.72rem;font-family:var(--font-mono);">─ ${d.label}</span>`
+            `<span class="ma-${d.period}" style="font-size:0.72rem;font-family:var(--font-mono);margin-right:12px;">─ ${d.label}</span>`
         ).join('');
 
         // 填入最新 MA 數值到資料格
