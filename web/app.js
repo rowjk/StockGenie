@@ -143,6 +143,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
 
+    // 綁定強制斷線事件至狀態指示燈與文字
+    const statusDot = document.getElementById('server-status-dot');
+    const statusText = document.getElementById('server-status-text');
+    if (statusDot) statusDot.addEventListener('click', forceDisconnect);
+    if (statusText) statusText.addEventListener('click', forceDisconnect);
+
     // 定時監控伺服器狀態 (每 60 秒，降低 /auth/usage 呼叫頻率)
     setInterval(checkServerStatus, 60000);
 
@@ -419,6 +425,41 @@ function setOfflineState() {
     state.selectedAccount = null;
     stopPolling();
     closeSSE();
+}
+
+async function forceDisconnect() {
+    const dot = document.getElementById('server-status-dot');
+    if (!dot || !dot.classList.contains('online')) {
+        return; // 離線狀態下點擊無效
+    }
+    if (!confirm("確定要強制切斷交易伺服器 (Shioaji) 的連線並關閉服務嗎？\n\n⚠️ 注意：強制斷線後儀表板將完全結束運行！若要重新連線，您必須手動重新執行「啟動儀表板.bat」。")) return;
+    try {
+        const resp = await smartFetch(`${LOCAL_API_BASE}/shioaji/disconnect`, { method: 'POST' });
+        if (resp.ok) {
+            setOfflineState();
+            const text = document.getElementById('server-status-text');
+            dot.classList.remove('online');
+            text.textContent = '伺服器已離線';
+            
+            // 顯示重啟覆蓋層，提示如何重新連線
+            const overlay = document.getElementById('server-restart-overlay');
+            if (overlay) {
+                const titleEl = document.getElementById('restart-title');
+                const msgEl = document.getElementById('restart-msg');
+                const forceBtn = document.getElementById('btn-restart-force-unlock');
+                if (titleEl) titleEl.textContent = '交易系統已強制離線';
+                if (msgEl) msgEl.textContent = '本機交易服務與代理伺服器已強制安全結束。如需重新連線，請重新點選「啟動儀表板.bat」。';
+                if (forceBtn) forceBtn.style.display = 'none';
+                overlay.classList.add('active');
+            }
+            alert("伺服器已強制關閉。如需重新連線，請點選「啟動儀表板.bat」重新啟動。");
+        } else {
+            alert("強制斷線失敗，請手動關閉視窗。");
+        }
+    } catch (e) {
+        console.error("強制斷線失敗", e);
+        alert(`強制斷線失敗：${e.message}`);
+    }
 }
 
 async function loadSession() {
