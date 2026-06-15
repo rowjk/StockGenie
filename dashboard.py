@@ -716,8 +716,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json_error(500, f"下單權限檢核異常: {e}")
                 return
 
+        # v1.11.2：防堵唯讀金鑰查詢 /order/trades 觸發上游 401 進而主動中斷 Solace 連線問題。
+        # 唯讀模式下一律直接返回空陣列，不向 daemon 轉發，維持 Solace 連線健康。
+        if method == "POST" and rel_path == "api/v1/order/trades":
+            try:
+                trading_permitted, _ = evaluate_trade_permission(load_env())
+                if not trading_permitted:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b"[]")
+                    return
+            except Exception as e:
+                self.send_json_error(500, f"唯讀委託查詢攔截異常: {e}")
+                return
+
         content_length = int(self.headers.get('Content-Length', 0))
         req_data = self.rfile.read(content_length) if content_length > 0 else None
+
 
         # 已實現損益查詢：前端未帶時間參數時，預設自動補上前 365 天區間
         if method == "POST" and rel_path == "api/v1/portfolio/profit_loss" and req_data:

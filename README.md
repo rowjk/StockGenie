@@ -19,7 +19,7 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.11.1`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.11.2`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
@@ -31,6 +31,7 @@
 
 ## 版本紀錄
 
+* **v1.11.2**（2026-06-15）：修復唯讀金鑰（ReqOnly 模式）因 proxy 轉發 `/order/trades` 導致上游 API 伺服器回報 401 錯誤、進而主動切斷 Solace 實時推播連線的問題；於 `dashboard.py` proxy 層針對唯讀金鑰攔截 `/order/trades` 請求直接回傳空陣列，以維持 Solace 推播通道健康運行；修正隱形黑白模式下，委買委賣力道條缺乏深淺灰階對比度導致無法看出交界之易用性 Bug。
 * **v1.11.1**（2026-06-12）：API 憑證管理頁新增 DPAPI 加密說明（密文綁定 Windows 帳戶、換帳戶/重灌後的紅字警告與恢復方式）。
 * **v1.11.0**（2026-06-12）：金鑰 DPAPI 加密落地——新增 `dpapi.py`（ctypes 呼叫 CryptProtectData，CurrentUser 範圍）；`save_credentials`/`save_env` 寫入時加密 `secret_key`/`ca_password`（深複製，記憶體保持明文），`load_credentials`/`load_env` 讀取時解密；明文舊檔於啟動時懶遷移；解密失敗（換 Windows 帳戶）降級為空值並紅字警告、不覆寫原檔防資料毀損；monitor.py 同步支援；新增 6 項 DPAPI 測試（含 Windows-only roundtrip 與「落地檔絕無明文」驗證）。
 * **v1.10.3**（2026-06-12）：正式模式 UTC 日期全站掃清（v1.9.3 同類問題的剩餘 6 處）——最關鍵為每日資產歷史存檔 `saveDailyAssetTotal`：00:00~08:00 開儀表板會把今日資產寫到昨日日期鍵、覆蓋昨日真實紀錄；其餘為 K 線/tick 日期區間、除權息過濾與匯出檔名。`getLocalDateStr()` 增加可選 Date 參數，全站統一使用。
