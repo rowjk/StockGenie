@@ -127,7 +127,7 @@ let state = {
     pnlStartDate: '',        // 已實現損益查詢開始日期
     pnlEndDate: '',          // 已實現損益查詢結束日期
     twseFeedTimer: null,     // TWSE 公告/除權息定時更新
-    demoMode: localStorage.getItem('demoMode') === 'true', // Demo 演示模式（前端攔截假數據）
+    demoMode: localStorage.getItem('demoMode') === 'true' || (localStorage.getItem('demoMode') === null && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1'), // Demo 演示模式（前端攔截假數據）
 };
 
 // ── 初始化載入 ──────────────────────────────────────────────────────────

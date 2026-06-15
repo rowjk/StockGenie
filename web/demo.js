@@ -89,6 +89,18 @@ const demoState = {
     pendingOrders: [], // v1.7 假未成交委託（與真實 /order/trades 回傳同構）
     cancelledIds: new Set(), // v1.7.1 已刪單號（模擬成交 timer 據此放棄成交）
     todayRealizedPnl: 0,     // Demo 模式下今日模擬已實現損益累計
+    credentials: {
+        active_index: 0,
+        profiles: [
+            {
+                name: '演示帳戶 (預設金鑰已加密)',
+                api_key: 'DEMO_API_KEY_12345',
+                secret_key: 'enc:dpapi:v1:dGVzdF9zZWNyZXRfa2V5',
+                ca_cert_path: 'C:\\Sinopac.pfx',
+                ca_password: 'enc:dpapi:v1:dGVzdF9jYV9wYXNzd29yZA=='
+            }
+        ]
+    },
 };
 
 function mockResponse(data, status = 200) {
@@ -570,6 +582,53 @@ async function smartFetch(url, options = {}) {
     }
 
     // 本機後端端點
+    if (url.includes('/api/credentials')) {
+        if (method === 'POST') {
+            try {
+                const parts = url.split('/api/credentials/');
+                const subAction = parts[parts.length - 1];
+                const payload = JSON.parse(body || '{}');
+                
+                if (subAction === 'save') {
+                    const idx = payload.index;
+                    const newProfile = {
+                        name: payload.name,
+                        api_key: payload.api_key,
+                        secret_key: payload.secret_key || 'enc:dpapi:v1:dGVzdF9zZWNyZXRfa2V5',
+                        ca_cert_path: payload.ca_cert_path,
+                        ca_password: payload.ca_password || 'enc:dpapi:v1:dGVzdF9jYV9wYXNzd29yZA=='
+                    };
+                    if (idx === -1) {
+                        demoState.credentials.profiles.push(newProfile);
+                    } else if (idx >= 0 && idx < demoState.credentials.profiles.length) {
+                        const old = demoState.credentials.profiles[idx];
+                        if (payload.secret_key === '******' || !payload.secret_key) newProfile.secret_key = old.secret_key;
+                        if (payload.ca_password === '*****' || !payload.ca_password) newProfile.ca_password = old.ca_password;
+                        demoState.credentials.profiles[idx] = newProfile;
+                    }
+                    return mockResponse({ success: true, restarting: true });
+                } else if (subAction === 'switch') {
+                    const idx = payload.index;
+                    if (idx >= 0 && idx < demoState.credentials.profiles.length) {
+                        demoState.credentials.active_index = idx;
+                    }
+                    return mockResponse({ success: true, restarting: true });
+                } else if (subAction === 'delete') {
+                    const idx = payload.index;
+                    if (idx >= 0 && idx < demoState.credentials.profiles.length) {
+                        demoState.credentials.profiles.splice(idx, 1);
+                        if (demoState.credentials.active_index >= demoState.credentials.profiles.length) {
+                            demoState.credentials.active_index = 0;
+                        }
+                    }
+                    return mockResponse({ success: true, restarting: false });
+                }
+            } catch (e) {
+                return mockResponse({ error: `[DEMO 模式] 操作失敗：${e.message}` }, 400);
+            }
+        }
+        return mockResponse(demoState.credentials);
+    }
     if (url.includes('/api/trade-permission')) return mockResponse({ trading_permitted: true, reason: '' });
     if (url.includes('/api/trade-logs')) return mockResponse(demoState.tradeLogs); // v1.7 不洩漏真實委託紀錄
     if (url.includes('/api/asset-history')) return mockResponse(demoAssetHistory()); // GET/POST/匯入/刪除一律回傳唯讀假歷史

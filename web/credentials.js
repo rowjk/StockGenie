@@ -23,7 +23,7 @@ function initCredentialsMgmt() {
 async function loadCredentials() {
     const statusEl = document.getElementById('credentials-status');
     try {
-        const resp = await fetch(`${LOCAL_API_BASE}/credentials`);
+        const resp = await smartFetch(`${LOCAL_API_BASE}/credentials`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         credentialsCache = await resp.json();
         renderCredentialsTable();
@@ -101,7 +101,7 @@ function hideCredentialForm() {
 }
 
 async function postCredentials(path, payload, failPrefix) {
-    const resp = await fetch(`${LOCAL_API_BASE}/credentials/${path}`, {
+    const resp = await smartFetch(`${LOCAL_API_BASE}/credentials/${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, verification_code: 'PEA6' }),
@@ -217,8 +217,8 @@ function showRestartOverlay() {
         restartPollTimer = setInterval(async () => {
             attempts += 1;
             try {
-                // 注意：重啟輪詢必須走真實 fetch（檢查實體伺服器，不可被 Demo 攔截）
-                const resp = await fetch(`${API_BASE}/auth/usage`);
+                // 注意：在 Demo 模式下此處會由 smartFetch 攔截以完成模擬重啟，非 Demo 模式則走真實 fetch
+                const resp = await smartFetch(`${API_BASE}/auth/usage`);
                 if (resp.ok) {
                     clearInterval(restartPollTimer);
                     restartPollTimer = null;
