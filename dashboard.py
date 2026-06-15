@@ -680,6 +680,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_switch_credentials()
         elif self.path == '/api/credentials/delete':
             self.handle_delete_credentials()
+        elif self.path == '/api/shioaji/disconnect':
+            self.handle_disconnect_shioaji()
         else:
             self.send_error(404, "Not Found")
 
@@ -1007,6 +1009,34 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json({"ok": True, "active_index": db["active_index"]})
         except Exception as e:
             self.send_json_error(500, f"刪除設定檔失敗: {e}")
+
+    def handle_disconnect_shioaji(self):
+        try:
+            self._send_json({"ok": True, "message": "Dashboard and Shioaji daemon shutting down..."})
+            
+            def shutdown():
+                import time
+                import os
+                time.sleep(0.5)
+                global shioaji_proc
+                with shioaji_proc_lock:
+                    if shioaji_proc is not None:
+                        try:
+                            shioaji_proc.terminate()
+                        except Exception:
+                            pass
+                        shioaji_proc = None
+                    try:
+                        _kill_shioaji_on_port(8080)
+                    except Exception:
+                        pass
+                print("\033[91m[PANIC] 前端觸發強制安全斷線，正在結束服務...\033[0m")
+                os._exit(0)
+                
+            import threading
+            threading.Thread(target=shutdown, daemon=True).start()
+        except Exception as e:
+            self.send_json_error(500, f"無法關閉服務: {e}")
 
     def _query_codes(self):
         """從 query string 解析 ?codes=2330,2317 參數。"""

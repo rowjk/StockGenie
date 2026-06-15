@@ -1589,3 +1589,18 @@ body.boss-mode .mask-block::after {
 .toast-warn {
     border-left-color: #f59e0b;
 }
+
+/* ── 前端強制斷線指示燈樣式 ── */
+#server-status-dot,
+#server-status-text {
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+}
+#server-status-dot:hover,
+#server-status-text:hover {
+    opacity: 0.8;
+}
+#server-status-text:hover {
+    text-decoration: underline;
+}
+
