@@ -103,6 +103,27 @@
     background-color: var(--text-muted);
 }
 
+/* ── 均線（MA）色彩設計系統 ── */
+.ma-5 { color: #3b82f6; }
+.ma-20 { color: #f59e0b; }
+.ma-60 { color: #10b981; }
+.ma-240 { color: #e11d48; }
+
+/* 🔘 Stealth Mode (Monochrome) */
+[data-scheme="stealth"] .ma-5,
+[data-scheme="stealth"] .ma-20,
+[data-scheme="stealth"] .ma-60,
+[data-scheme="stealth"] .ma-240 {
+    color: var(--text-primary) !important;
+}
+
+/* 🟢 Matrix Mode */
+[data-scheme="matrix"] .ma-5 { color: #00ff41 !important; }
+[data-scheme="matrix"] .ma-20 { color: #00cc33 !important; }
+[data-scheme="matrix"] .ma-60 { color: #009922 !important; }
+[data-scheme="matrix"] .ma-240 { color: #006611 !important; }
+
+
 
 /* 🟢🔴 Muted traditional color scheme */
 [data-scheme="muted"] {
