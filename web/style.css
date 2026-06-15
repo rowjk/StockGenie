@@ -95,6 +95,15 @@
     color: var(--bg-primary) !important;
 }
 
+/* ── 隱形黑白模式下，讓委買委賣對比條具有深淺灰階的對比度，避免融合 ── */
+[data-scheme="stealth"] .bid-ask-strength-bar .strength-bid {
+    background-color: var(--text-primary);
+}
+[data-scheme="stealth"] .bid-ask-strength-bar .strength-ask {
+    background-color: var(--text-muted);
+}
+
+
 /* 🟢🔴 Muted traditional color scheme */
 [data-scheme="muted"] {
     --color-up: #e11d48;          /* Soft Rose Red for Taiwan stock up */
