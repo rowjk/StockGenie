@@ -1976,26 +1976,112 @@ function updateDetailView(code) {
 async function fetchKbarsWithCache(code) {
     const CACHE_MS = 60 * 60 * 1000; // 1 小時
     const cached = kbarsCache[code];
-    if (cached && (Date.now() - cached.fetchedAt < CACHE_MS)) {
-        return cached.closes;
+    if (cached) {
+        if (cached instanceof Promise) {
+            return cached;
+        }
+        if (Date.now() - cached.fetchedAt < CACHE_MS) {
+            return cached.closes;
+        }
     }
+
     const item = state.watchlist.find(wi => wi.code === code);
     const exchange = item ? (item.exchange || 'TSE') : 'TSE';
+    const secType = item ? (item.security_type || 'STK') : 'STK';
     const end = getLocalDateStr();
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 2);
     const start = getLocalDateStr(startDate);
-    const secType = item ? (item.security_type || 'STK') : 'STK';
-    const resp = await smartFetch(`${API_BASE}/data/kbars`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contract: { security_type: secType, exchange, code }, start, end, frequency: '1D' })
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const closes = (data.Close || data.close || []).map(Number);
-    kbarsCache[code] = { closes, fetchedAt: Date.now() };
-    return closes;
+
+    const promise = (async () => {
+        if (state.demoMode) {
+            const resp = await smartFetch(`${API_BASE}/data/kbars`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contract: { security_type: secType, exchange, code }, start, end, frequency: '1D' })
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const closes = (data.Close || data.close || []).map(Number);
+            return closes;
+        }
+
+        // 實體模式：拆分 30 天區間以符合上游 daemon 限制，並在前端重取樣為日 K
+        const chunks = [];
+        let currentStart = new Date(startDate);
+        const targetEnd = new Date();
+        
+        while (currentStart < targetEnd) {
+            let currentEnd = new Date(currentStart);
+            currentEnd.setDate(currentEnd.getDate() + 29); // 30 days inclusive
+            if (currentEnd > targetEnd) {
+                currentEnd = new Date(targetEnd);
+            }
+            chunks.push({
+                start: getLocalDateStr(currentStart),
+                end: getLocalDateStr(currentEnd)
+            });
+            currentStart = new Date(currentEnd);
+            currentStart.setDate(currentStart.getDate() + 1);
+        }
+
+        try {
+            const promises = chunks.map(chunk => 
+                smartFetch(`${API_BASE}/data/kbars`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contract: { security_type: secType, exchange, code }, start: chunk.start, end: chunk.end, frequency: '1D' })
+                }).then(async resp => {
+                    if (!resp.ok) return null;
+                    try {
+                        return await resp.json();
+                    } catch (e) {
+                        return null;
+                    }
+                }).catch(() => null)
+            );
+
+            const results = await Promise.all(promises);
+            
+            // 合併結果並重取樣成日 K (取每天最後一筆分鐘 K 價格作為日收盤)
+            const dailyMap = {};
+            results.forEach(data => {
+                if (!data) return;
+                const dates = data.datetime || data.Datetime || [];
+                const closes = data.close || data.Close || [];
+                for (let i = 0; i < dates.length; i++) {
+                    if (dates[i] && closes[i] !== undefined) {
+                        const dateStr = dates[i].substring(0, 10); // "YYYY-MM-DD"
+                        dailyMap[dateStr] = Number(closes[i]);
+                    }
+                }
+            });
+
+            const sortedDates = Object.keys(dailyMap).sort();
+            if (sortedDates.length === 0) return null;
+            
+            return sortedDates.map(d => dailyMap[d]);
+        } catch (e) {
+            console.error("fetchKbarsWithCache chunking 失敗:", e);
+            return null;
+        }
+    })();
+
+    kbarsCache[code] = promise;
+
+    try {
+        const closes = await promise;
+        if (!closes) {
+            delete kbarsCache[code];
+            return null;
+        }
+        kbarsCache[code] = { closes, fetchedAt: Date.now() };
+        return closes;
+    } catch (e) {
+        delete kbarsCache[code];
+        console.error("fetchKbarsWithCache 執行錯誤:", e);
+        return null;
+    }
 }
 
 // 只更新 MA 數值欄位，不繪製圖表（selectWatchlistItem 一律呼叫）
@@ -2004,6 +2090,7 @@ async function loadMAStats(code) {
     const idMap = { 5: 'detail-ma5', 20: 'detail-ma20', 60: 'detail-ma60', 240: 'detail-ma240' };
     try {
         const closes = await fetchKbarsWithCache(code);
+        if (document.getElementById('detail-code').textContent !== code) return;
         if (!closes || closes.length < 5) return;
         MA_PERIODS.forEach(period => {
             const el = document.getElementById(idMap[period]);
@@ -2125,6 +2212,7 @@ async function renderDetailMAChart(code) {
     try {
         // 使用快取（與 loadMAStats 共用，避免重複抓 2 年資料）
         const allCloses = await fetchKbarsWithCache(code);
+        if (document.getElementById('detail-code').textContent !== code) return;
         if (!allCloses) { legendEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem;">無法取得歷史資料</span>'; return; }
 
         // 重新取得畫布尺寸（fetch 期間可能被重繪過）
