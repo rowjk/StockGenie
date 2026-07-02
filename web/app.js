@@ -2,6 +2,8 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.11.8 (2026-07-02)
+   - [優化] 前端改單/刪單失敗訊息中加入非 API 管道下單限制之提示說明；更新 `walkthrough.md` 與 `README.md` 文件。
    v1.11.7 (2026-07-01)
    - [修正] 修復畫面縮小時「未成交委託」跑版與表格內容擠壓換行的問題，新增水平滾動容器，並將所有表格單元格樣式設定為不自動換行（nowrap）。
    v1.11.6 (2026-07-01)
@@ -1353,7 +1355,12 @@ async function submitOrderMgmt() {
             setTimeout(fetchPendingOrders, 1200); // 略等回報後重拉（SSE 亦會觸發）
             setTimeout(fetchTradeLogs, 1200);     // v1.7.2 改單也產生新紀錄
         } else {
-            alert(`${actionText}失敗：${await resp.text()}`);
+            const errText = await resp.text();
+            let extraTip = '';
+            if (errText.includes('CA not activated for:')) {
+                extraTip = '\n\n【提示】若此委託單是經由手機 APP、網頁或電腦看盤軟體等非 API 管道所建立，將無法透過 API 進行刪改，請回到原下單管道進行操作。';
+            }
+            alert(`${actionText}失敗：${errText}${extraTip}`);
         }
     } catch (e) {
         console.error(`委託單${actionText} API 調用失敗`, e);
