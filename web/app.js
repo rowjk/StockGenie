@@ -2,6 +2,8 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.11.9 (2026-07-02)
+   - [安全] 將 SSE 成交回報連線改經本機 Proxy 代理（/proxy/），套用完整的 Host/Origin 同源性安全過濾防護。
    v1.11.8 (2026-07-02)
    - [優化] 前端改單/刪單失敗訊息中加入非 API 管道下單限制之提示說明；更新 `walkthrough.md` 與 `README.md` 文件。
    v1.11.7 (2026-07-01)
@@ -556,8 +558,8 @@ function startSSE() {
     closeSSE();
     if (state.demoMode) return; // Demo 模式不建立實體 SSE 連線
     
-    // 連線至永豐即時回報 SSE 端點 (直連 8080 避免 proxy 阻塞)
-    state.sseConnection = new EventSource(`http://127.0.0.1:8080/api/v1/stream/data/order_event`);
+    // 連線至永豐即時回報 SSE 端點 (經由 proxy 以套用 Host/Origin 同源保護)
+    state.sseConnection = new EventSource(`/proxy/api/v1/stream/data/order_event`);
     
     state.sseConnection.onmessage = (event) => {
         try {
