@@ -52,6 +52,27 @@ shioaji_proc_lock = threading.Lock()
 _win_job_handle = None
 _asset_history_lock = threading.Lock()
 
+# ── .env 快取（啟動時初始化，切換設定檔時更新，避免每次下單都讀磁碟）──
+_env_cache = {}
+_env_cache_lock = threading.Lock()
+
+def get_cached_env():
+    """取得快取的 .env 內容（執行緒安全）。"""
+    with _env_cache_lock:
+        return dict(_env_cache)
+
+def update_env_cache(env=None):
+    """更新 .env 快取；env 為 None 時自磁碟重讀。"""
+    global _env_cache
+    if env is None:
+        try:
+            env = load_env()
+        except Exception as e:
+            print(f"⚠ .env 快取更新失敗：{e}")
+            return
+    with _env_cache_lock:
+        _env_cache = dict(env)
+
 # ── v1.7.0 委託紀錄（記錄「委託成功送出」，非成交；含真實交易資料，勿入版控）──
 TRADE_LOG_FILE = WORKSPACE_DIR / "trade_logs.json"
 TRADE_LOG_MAX = 99
@@ -580,23 +601,29 @@ def _kill_shioaji_on_port(port=8080):
         # 僅適用於 Windows
         if sys.platform != "win32":
             return
-        cmd = f'netstat -ano | findstr :{port}'
-        output = subprocess.check_output(cmd, shell=True).decode('utf-8', errors='ignore')
+        # 不用 shell=True：直接傳 list 參數，避免未來參數化時的命令注入風險；
+        # 原本 `netstat -ano | findstr :{port}` 改為在 Python 層過濾。
+        raw = subprocess.check_output(['netstat', '-ano'], stderr=subprocess.DEVNULL).decode('utf-8', errors='ignore')
         pids = set()
-        for line in output.strip().split('\n'):
+        port_str = f':{port}'
+        for line in raw.splitlines():
             parts = line.split()
-            if len(parts) >= 5 and ('LISTENING' in parts or 'LISTEN' in parts):
+            # 格式：Proto  Local  Foreign  State  PID（LISTENING 行）
+            if len(parts) >= 5 and parts[3] in ('LISTENING', 'LISTEN') and parts[1].endswith(port_str):
                 pids.add(parts[-1])
 
         for pid in pids:
             try:
-                proc_info = subprocess.check_output(f'tasklist /FI "PID eq {pid}"', shell=True).decode('utf-8', errors='ignore')
+                proc_info = subprocess.check_output(
+                    ['tasklist', '/FI', f'PID eq {pid}'],
+                    stderr=subprocess.DEVNULL
+                ).decode('utf-8', errors='ignore')
             except Exception as e:
                 print(f"\033[93m⚠ 無法確認 PID {pid} 的進程身分（{e}），跳過不結束。\033[0m")
                 continue
             if "shioaji" in proc_info.lower():
                 print(f"\033[93m⚠ 偵測到殘留的 Shioaji 進程 (PID: {pid}) 佔用 Port {port}，強制結束中...\033[0m")
-                subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['taskkill', '/F', '/PID', pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
                 print(f"\033[93m⚠ Port {port} 由非 shioaji 進程佔用 (PID: {pid})，不予結束；"
                       f"若 Shioaji 啟動失敗請手動處理。\033[0m")
@@ -660,10 +687,7 @@ def start_shioaji_server(env_dict):
                 [shioaji_bin, "server", "start", "--no-open"],
                 env=run_env
             )
-            # 將子進程指派給 Windows Job Object
-            global _win_job_handle
-            if _win_job_handle is None and sys.platform == "win32":
-                _win_job_handle = _create_win_job()
+            # 將子進程指派給 Windows Job Object（已在 main() 提前建立）
             if _win_job_handle is not None and sys.platform == "win32":
                 ctypes.windll.kernel32.AssignProcessToJobObject.argtypes = [
                     ctypes.c_void_p,
@@ -684,6 +708,7 @@ def apply_active_profile(db):
     profile = db["profiles"][db["active_index"]]
     env_dict = profile_env(profile)
     save_env(env_dict)
+    update_env_cache(env_dict)  # 同步更新快取，讓 proxy 立即取得新設定
     threading.Thread(target=start_shioaji_server, args=(env_dict,), daemon=True).start()
 
 # ── Custom HTTP Request Handler ──────────────────────────────────────────
@@ -800,9 +825,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if k in self.headers:
                     headers[k] = self.headers[k]
             req = urllib.request.Request(target_url, headers=headers, method=method)
+            # SSE 串流：先以較長 connect timeout 建連（30s），建連後在 socket 層設
+            # 60s 讀取 timeout，防止 shioaji 崩潰後 thread 永久阻塞；
+            # 前端收到 EOF 後會依 EventSource 規格自動重連。
+            SSE_READ_TIMEOUT = 60
             try:
-                # SSE 串流連線不設 Timeout
-                with urllib.request.urlopen(req, timeout=None) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    # 取得底層 socket 並設定讀取 timeout
+                    try:
+                        resp.fp.raw._sock.settimeout(SSE_READ_TIMEOUT)
+                    except Exception:
+                        pass  # 取不到 socket 時降級為無 read timeout（至少有 connect timeout）
                     self.send_response(resp.status)
                     for k, v in resp.headers.items():
                         self.send_header(k, v)
@@ -814,8 +847,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         self.wfile.write(line)
                         self.wfile.flush()
                 return
-            except Exception as e:
-                # 捕獲 BrokenPipeError 或其它連線中斷異常，優雅終止
+            except Exception:
+                # 捕獲 BrokenPipeError、socket.timeout 或其它連線中斷異常，優雅終止
                 return
         
         # Intercept order placement to enforce read-only protection
@@ -824,7 +857,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         ORDER_MUTATION_PATHS = ("api/v1/order/place_order", "api/v1/order/update_price", "api/v1/order/update_qty")
         if method == "POST" and rel_path in ORDER_MUTATION_PATHS:
             try:
-                trading_permitted, _ = evaluate_trade_permission(load_env())
+                trading_permitted, _ = evaluate_trade_permission(get_cached_env())
                 if not trading_permitted:
                     self.send_json_error(400, "下單權限關閉")
                     return
@@ -836,7 +869,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # 唯讀模式下一律直接返回空陣列，不向 daemon 轉發，維持 Solace 連線健康。
         if method == "POST" and rel_path == "api/v1/order/trades":
             try:
-                trading_permitted, _ = evaluate_trade_permission(load_env())
+                trading_permitted, _ = evaluate_trade_permission(get_cached_env())
                 if not trading_permitted:
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
@@ -973,7 +1006,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def handle_get_trade_permission(self):
         try:
-            trading_permitted, reason = evaluate_trade_permission(load_env())
+            trading_permitted, reason = evaluate_trade_permission(get_cached_env())
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -1266,11 +1299,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json_error(400, "匯入拒絕：" + "；".join(errors[:5]))
                 return
 
-            # 全部通過才合併寫入（_write_history 內含 .bak 備份）
-            history_dict = self._read_history_dict()
-            for item in data:
-                history_dict[item['date']] = float(item['value'])
-            self._write_history(history_dict)
+            # 全部通過才合併寫入（read-modify-write 整段持鎖，_write_history_unlocked 含 .bak 備份）
+            with _asset_history_lock:
+                history_dict = self._read_history_dict_unlocked()
+                for item in data:
+                    history_dict[item['date']] = float(item['value'])
+                self._write_history_unlocked(history_dict)
             updated = [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
             print(f"✅ 歷史資料匯入成功：{len(data)} 筆（合併後共 {len(updated)} 筆）")
             self._send_json(updated)
@@ -1320,73 +1354,81 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def handle_post_history(self):
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length <= 0:
-            self.send_error(400, "Bad Request: missing body")
+            self.send_json_error(400, "Bad Request: missing body")
             return
         post_data = self.rfile.read(content_length)
         try:
             data = json.loads(post_data.decode('utf-8'))
             date_str = data['date']
             val = float(data['value'])
-            
-            history_dict = self._read_history_dict()
-            history_dict[date_str] = val
-            
-            # 為了防範導入大批歷史資料後被每日自動存檔（POST）截斷，
-            # 只有在總筆數大於 3000 筆（約 8 年的每日資料）時，才啟動清理，只保留最近 3000 筆
-            if len(history_dict) > 3000:
-                sorted_dates = sorted(history_dict.keys(), reverse=True)
-                history_dict = {k: history_dict[k] for k in sorted_dates[:3000]}
 
-            self._write_history(history_dict)
-            
-            # Return sorted list
+            # read-modify-write 原子化：整段持鎖，避免並發請求互蓋
+            with _asset_history_lock:
+                history_dict = self._read_history_dict_unlocked()
+                history_dict[date_str] = val
+
+                # 只有在總筆數大於 3000 筆（約 8 年的每日資料）時，才啟動清理，只保留最近 3000 筆
+                if len(history_dict) > 3000:
+                    sorted_dates = sorted(history_dict.keys(), reverse=True)
+                    history_dict = {k: history_dict[k] for k in sorted_dates[:3000]}
+
+                self._write_history_unlocked(history_dict)
+
             updated_list = [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
-            
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(updated_list).encode('utf-8'))
         except Exception as e:
-            self.send_error(400, f"Bad Request: {e}")
+            self.send_json_error(400, f"Bad Request: {e}")
 
     def handle_delete_history(self, date_str):
-        history_dict = self._read_history_dict()
-        if date_str in history_dict:
+        with _asset_history_lock:
+            history_dict = self._read_history_dict_unlocked()
+            if date_str not in history_dict:
+                self.send_json_error(404, "Date not found")
+                return
             del history_dict[date_str]
-            self._write_history(history_dict)
-            
-            updated_list = [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(updated_list).encode('utf-8'))
-        else:
-            self.send_error(404, "Date not found")
+            self._write_history_unlocked(history_dict)
+
+        updated_list = [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(updated_list).encode('utf-8'))
 
     def _read_history(self):
         history_dict = self._read_history_dict()
         return [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
 
+    def _read_history_dict_unlocked(self):
+        """讀取歷史資料（不帶鎖，呼叫端必須已持有 _asset_history_lock）。"""
+        if not HISTORY_FILE.exists():
+            return {}
+        try:
+            with open(HISTORY_FILE, encoding='utf-8') as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _write_history_unlocked(self, data):
+        """寫入歷史資料（不帶鎖，呼叫端必須已持有 _asset_history_lock）。"""
+        try:
+            if HISTORY_FILE.exists():
+                shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
+            with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error writing asset history: {e}")
+
     def _read_history_dict(self):
         with _asset_history_lock:
-            if not HISTORY_FILE.exists():
-                return {}
-            try:
-                with open(HISTORY_FILE, encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data if isinstance(data, dict) else {}
-            except Exception:
-                return {}
+            return self._read_history_dict_unlocked()
 
     def _write_history(self, data):
         with _asset_history_lock:
-            try:
-                if HISTORY_FILE.exists():
-                    shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
-                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-            except Exception as e:
-                print(f"Error writing asset history: {e}")
+            self._write_history_unlocked(data)
 
 # ── Main Thread and Launcher ──────────────────────────────────────────────
 def run_web_server(server_port=8081):
@@ -1401,6 +1443,11 @@ def run_web_server(server_port=8081):
         httpd.server_close()
 
 def main():
+    # Windows Job Object 提前初始化：確保後續所有 Popen 子進程都在 Job 管控範圍內
+    global _win_job_handle
+    if sys.platform == "win32" and _win_job_handle is None:
+        _win_job_handle = _create_win_job()
+
     # 多組設定檔：不存在時自 .env 無縫升級建立第一組
     db = load_credentials()
     profile = db["profiles"][db["active_index"]]
@@ -1411,6 +1458,9 @@ def main():
         save_env(profile_env(profile))
     except Exception as e:
         print(f"⚠ .env 同步失敗（不影響啟動）：{e}")
+
+    # 初始化 .env 快取（proxy 下單時讀快取，避免每次請求都讀磁碟）
+    update_env_cache(profile_env(profile))
 
     # 先啟動網頁伺服器：即使 Shioaji 啟動失敗，設定頁面仍可修正金鑰（防鎖死）
     web_thread = threading.Thread(target=run_web_server, args=(8081,), daemon=True)
