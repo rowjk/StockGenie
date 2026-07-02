@@ -19,7 +19,7 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.12.0`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.12.1`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
@@ -31,6 +31,7 @@
 
 ## 版本紀錄
 
+* **v1.12.1**（2026-07-02）：自選監控支援期貨（FUT）合約。新增自選股時，若股票與大盤指數皆查無代碼，Fallback 查詢期貨合約（如台指期 `TXFR1`、小台指 `MXFR1`）；判定為期貨時，比照大盤指數設為唯讀觀察商品並隱藏下單按鈕；同步於 `demo.js` 加入近月大台、小台期貨之假數據。
 * **v1.12.0**（2026-07-02）：程式碼品質強化版——修復資產歷史 read-modify-write 競態（三個 handler 改為持鎖整段操作）；修復 SSE proxy thread 永久阻塞（加入 socket 層 60s 讀取 timeout）；新增 `.env` 全域快取（`get_cached_env`）避免每次下單都讀磁碟、切換設定檔時同步更新；`_kill_shioaji_on_port` 移除 `shell=True` 改用 list 參數消除命令注入風險；統一 `handle_post_history` 與 `handle_delete_history` 錯誤回應為 JSON 格式；Windows Job Object 移至 `main()` 提前初始化確保所有子進程皆受管控。
 * **v1.11.9**（2026-07-02）：架構與安全強化版——將即時成交/委託回報（SSE 串流）改經本機 Proxy 代理（`/proxy/`）以套用 Host/Origin 同源防護；為資產歷史 K 線/資料讀寫操作引入線程鎖保護，防範多執行緒競態；導入 Windows Job Object 綁定 `shioaji.exe` 進程生命週期，徹底防止主進程關閉/崩潰時的子進程殘留。
 * **v1.11.8**（2026-07-02）：新增非 API 管道（如手機 App）委託單之刪改限制提示與排障說明，並於前端改價/減量/刪單失敗訊息中加入友善警示；同步更新 `walkthrough.md` 排障文件。
