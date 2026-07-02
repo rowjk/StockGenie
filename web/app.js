@@ -2,6 +2,10 @@
    StockGenie API Stock Dashboard - Core Frontend JavaScript (Traditional Chinese)
    ==========================================================================
    版本歷史：
+   v1.12.1 (2026-07-02)
+   - [功能] 自選股監控新增支援期貨（FUT）合約（如台指期大台 `TXFR1`、小台 `MXFR1`），自動判定為唯讀觀察商品並隱藏下單按鈕。
+   v1.12.0 (2026-07-02)
+   - [優化] 程式碼品質強化（資產歷史 read-modify-write 鎖整段持鎖、SSE 串流 timeout、.env 快取、shell 安全、統一錯誤格式）。
    v1.11.9 (2026-07-02)
    - [安全] 將 SSE 成交回報連線改經本機 Proxy 代理（/proxy/），套用完整的 Host/Origin 同源性安全過濾防護。
    v1.11.8 (2026-07-02)
@@ -1563,8 +1567,14 @@ async function initWatchlist() {
                 const secType = item.security_type || 'STK';
                 let resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${secType}`);
                 if (!resp.ok) {
-                    const altType = secType === 'STK' ? 'IND' : 'STK';
-                    resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${altType}`);
+                    const fallbacks = ['STK', 'IND', 'FUT'].filter(t => t !== secType);
+                    for (const t of fallbacks) {
+                        resp = await smartFetch(`${API_BASE}/data/contracts/${item.code}?security_type=${t}`);
+                        if (resp.ok) {
+                            item.security_type = t;
+                            break;
+                        }
+                    }
                 }
                 if (resp.ok) {
                     const contract = await resp.json();
@@ -1598,12 +1608,16 @@ function initWatchlistControls() {
         }
 
         try {
-            // 查詢合約資訊，優先用 STK (股票) 查，若查無則用 IND (指數) 查
             let secType = 'STK';
             let resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
             if (!resp.ok) {
                 resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=IND`);
-                if (resp.ok) secType = 'IND';
+                if (resp.ok) {
+                    secType = 'IND';
+                } else {
+                    resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=FUT`);
+                    if (resp.ok) secType = 'FUT';
+                }
             }
             if (resp.ok) {
                 const contract = await resp.json();
@@ -1754,7 +1768,7 @@ function renderWatchlist() {
     state.watchlist.forEach((item, index) => {
         const div = document.createElement('div');
         div.className = 'watchlist-item';
-        const isIndex = item.security_type === 'IND';
+        const isIndex = item.security_type === 'IND' || item.security_type === 'FUT';
         if (isIndex) {
             div.classList.add('watchlist-item-index');
         }

@@ -10,6 +10,8 @@ const DEMO_KNOWN_TW = {
     '001': { name: '加權指數', price: 22000.0 },
     'TSE001': { name: '加權指數', price: 22000.0 },
     'OTC101': { name: '櫃買指數', price: 260.0 },
+    'TXFR1': { name: '台指期近月', price: 22000.0 },
+    'MXFR1': { name: '小台指近月', price: 22000.0 },
     
     // 大型權值股
     '2330': { name: '台積電', price: 950.0 },
