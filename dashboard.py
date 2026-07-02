@@ -19,6 +19,7 @@ from dpapi import encrypt_str, decrypt_str, is_encrypted
 
 # 解決 Windows 主控台 Unicode 輸出錯誤 (CP950 編碼問題)
 if sys.platform == "win32":
+    import ctypes
     try:
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
@@ -46,6 +47,10 @@ ALLOWED_ORIGINS = {f"http://{h}" for h in ALLOWED_HOSTS}
 # Shioaji 守護進程全域引用（由 start_shioaji_server 管理；lock 防併發重啟）
 shioaji_proc = None
 shioaji_proc_lock = threading.Lock()
+
+# Windows Job Object 全域控制代碼與資產歷史線程鎖
+_win_job_handle = None
+_asset_history_lock = threading.Lock()
 
 # ── v1.7.0 委託紀錄（記錄「委託成功送出」，非成交；含真實交易資料，勿入版控）──
 TRADE_LOG_FILE = WORKSPACE_DIR / "trade_logs.json"
@@ -321,6 +326,77 @@ def evaluate_trade_permission(env):
         return False, "CA cert not configured"
     return True, ""
 
+# ── Windows Job Object 結構定義與建立函式 ──
+if sys.platform == "win32":
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ('ReadOperationCount', ctypes.c_uint64),
+            ('WriteOperationCount', ctypes.c_uint64),
+            ('OtherOperationCount', ctypes.c_uint64),
+            ('ReadTransferCount', ctypes.c_uint64),
+            ('WriteTransferCount', ctypes.c_uint64),
+            ('OtherTransferCount', ctypes.c_uint64)
+        ]
+
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ('PerProcessUserTimeLimit', ctypes.c_int64),
+            ('PerJobUserTimeLimit', ctypes.c_int64),
+            ('LimitFlags', ctypes.c_uint32),
+            ('MinimumWorkingSetSize', ctypes.c_size_t),
+            ('MaximumWorkingSetSize', ctypes.c_size_t),
+            ('ActiveProcessLimit', ctypes.c_uint32),
+            ('Affinity', ctypes.c_size_t),
+            ('PriorityClass', ctypes.c_uint32),
+            ('SchedulingClass', ctypes.c_uint32)
+        ]
+
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ('BasicLimitInformation', _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ('IoInfo', _IO_COUNTERS),
+            ('ProcessMemoryLimit', ctypes.c_size_t),
+            ('JobMemoryLimit', ctypes.c_size_t),
+            ('PeakProcessMemoryLimit', ctypes.c_size_t),
+            ('PeakJobMemoryLimit', ctypes.c_size_t)
+        ]
+
+def _create_win_job():
+    """建立並設定一個 Windows Job Object，當主進程關閉時自動終止子進程。"""
+    if sys.platform != "win32":
+        return None
+    try:
+        h_job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return None
+        
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JobObjectExtendedLimitInformation = 9
+        
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        
+        ctypes.windll.kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_ulong
+        ]
+        
+        res = ctypes.windll.kernel32.SetInformationJobObject(
+            h_job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info)
+        )
+        if not res:
+            ctypes.windll.kernel32.CloseHandle(h_job)
+            return None
+        return h_job
+    except Exception as e:
+        print(f"⚠ 建立 Windows Job Object 失敗（不影響執行，但崩潰時子進程可能殘留）：{e}")
+        return None
+
 def resolve_shioaji_bin():
     # 1. Check if shioaji is on system PATH
     shioaji_bin = shutil.which("shioaji")
@@ -584,6 +660,19 @@ def start_shioaji_server(env_dict):
                 [shioaji_bin, "server", "start", "--no-open"],
                 env=run_env
             )
+            # 將子進程指派給 Windows Job Object
+            global _win_job_handle
+            if _win_job_handle is None and sys.platform == "win32":
+                _win_job_handle = _create_win_job()
+            if _win_job_handle is not None and sys.platform == "win32":
+                ctypes.windll.kernel32.AssignProcessToJobObject.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_void_p
+                ]
+                res = ctypes.windll.kernel32.AssignProcessToJobObject(_win_job_handle, shioaji_proc._handle)
+                if not res:
+                    err = ctypes.windll.kernel32.GetLastError()
+                    print(f"⚠ 無法將 Shioaji 進程指派給 Job Object，錯誤碼：{err}")
             return True
         except Exception as e:
             print(f"\033[91m✖ Shioaji 伺服器啟動失敗：{e}\033[0m")
@@ -703,6 +792,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # 將 /proxy/api/v1/... 轉為 http://127.0.0.1:8080/api/v1/...
         rel_path = self.path.partition('/proxy/')[2]
         target_url = f"http://127.0.0.1:8080/{rel_path}"
+
+        # 針對 SSE 即時成交/委託回報串流的非阻塞、行式長連線反向代理
+        if rel_path == "api/v1/stream/data/order_event":
+            headers = {}
+            for k in ("Accept", "Cache-Control", "Last-Event-ID"):
+                if k in self.headers:
+                    headers[k] = self.headers[k]
+            req = urllib.request.Request(target_url, headers=headers, method=method)
+            try:
+                # SSE 串流連線不設 Timeout
+                with urllib.request.urlopen(req, timeout=None) as resp:
+                    self.send_response(resp.status)
+                    for k, v in resp.headers.items():
+                        self.send_header(k, v)
+                    self.end_headers()
+                    while True:
+                        line = resp.readline()
+                        if not line:
+                            break
+                        self.wfile.write(line)
+                        self.wfile.flush()
+                return
+            except Exception as e:
+                # 捕獲 BrokenPipeError 或其它連線中斷異常，優雅終止
+                return
         
         # Intercept order placement to enforce read-only protection
         # v1.7.1：改價/減量同樣受權限管制；刪單(cancel_order)刻意豁免——屬風險降低操作，
@@ -1254,23 +1368,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         return [{"date": k, "value": v} for k, v in sorted(history_dict.items())]
 
     def _read_history_dict(self):
-        if not HISTORY_FILE.exists():
-            return {}
-        try:
-            with open(HISTORY_FILE, encoding='utf-8') as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+        with _asset_history_lock:
+            if not HISTORY_FILE.exists():
+                return {}
+            try:
+                with open(HISTORY_FILE, encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
 
     def _write_history(self, data):
-        try:
-            if HISTORY_FILE.exists():
-                shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
-            with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"Error writing asset history: {e}")
+        with _asset_history_lock:
+            try:
+                if HISTORY_FILE.exists():
+                    shutil.copy2(HISTORY_FILE, HISTORY_FILE.with_name('asset_history.bak.json'))
+                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"Error writing asset history: {e}")
 
 # ── Main Thread and Launcher ──────────────────────────────────────────────
 def run_web_server(server_port=8081):
