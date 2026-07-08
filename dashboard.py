@@ -52,6 +52,10 @@ shioaji_proc_lock = threading.Lock()
 _win_job_handle = None
 _asset_history_lock = threading.Lock()
 
+# 自動重啟冷卻時間與鎖（防止多個併發請求重複觸發重啟）
+_last_auto_restart_time = 0
+_auto_restart_lock = threading.Lock()
+
 # ── .env 快取（啟動時初始化，切換設定檔時更新，避免每次下單都讀磁碟）──
 _env_cache = {}
 _env_cache_lock = threading.Lock()
@@ -811,6 +815,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def handle_proxy_request(self, method):
+        global _last_auto_restart_time
         import urllib.request
         import urllib.error
         
@@ -981,8 +986,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 try:
                     err_preview = err_data.decode('utf-8', errors='replace')[:300]
                     print(f"\033[93m⚠ Proxy 上游錯誤 HTTP{e.code} [{rel_path}]：{err_preview}\033[0m")
-                except Exception:
-                    pass
+                    if e.code == 500 and "SessionNotEstablished" in err_preview:
+                        now = time.time()
+                        should_restart = False
+                        with _auto_restart_lock:
+                            if now - _last_auto_restart_time > 60:
+                                _last_auto_restart_time = now
+                                should_restart = True
+                        if should_restart:
+                            print("\033[91m[AUTO-RESTART] 偵測到 SolClient Session 遺失，正在自動重啟 Shioaji 伺服器...\033[0m")
+                            threading.Thread(target=start_shioaji_server, args=(get_cached_env(),), daemon=True).start()
+                        else:
+                            print("\033[93m[AUTO-RESTART] 偵測到 SolClient Session 遺失，但冷卻時間未到，跳過重啟。\033[0m")
+                except Exception as restart_err:
+                    print(f"自動重啟 Shioaji 伺服器時發生錯誤: {restart_err}")
                 self.send_response(e.code)
                 self.send_header('Content-Type', e.headers.get('Content-Type', 'application/json'))
                 self.end_headers()
@@ -992,6 +1009,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             # 逾時或連線層級錯誤也印至終端機，便於排障
             print(f"\033[93m⚠ Proxy 連線失敗 [{rel_path}]（等待上限 {proxy_timeout}s）：{e}\033[0m")
+            try:
+                # Check if shioaji daemon is not running and restart if needed
+                is_dead = False
+                with shioaji_proc_lock:
+                    if shioaji_proc is None or shioaji_proc.poll() is not None:
+                        is_dead = True
+                
+                if is_dead:
+                    now = time.time()
+                    should_restart = False
+                    with _auto_restart_lock:
+                        if now - _last_auto_restart_time > 60:
+                            _last_auto_restart_time = now
+                            should_restart = True
+                    if should_restart:
+                        print("\033[91m[AUTO-RESTART] 偵測到 Shioaji 守護進程未運行，正在自動重啟...\033[0m")
+                        threading.Thread(target=start_shioaji_server, args=(get_cached_env(),), daemon=True).start()
+                    else:
+                        print("\033[93m[AUTO-RESTART] Shioaji 守護進程未運行，但冷卻時間未到，跳過重啟。\033[0m")
+            except Exception as restart_err:
+                print(f"檢查並自動重啟 Shioaji 伺服器時發生錯誤: {restart_err}")
             self.send_json_error(500, f"Proxy error: {e}")
 
     def handle_get_trade_logs(self):
