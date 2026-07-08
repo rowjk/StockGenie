@@ -175,6 +175,14 @@
                 
                 <!-- ── VIEW 1: DASHBOARD OVERVIEW ── -->
                 <section class="view-section active" id="view-dashboard">
+                    <!-- 頁面標題與統一手動更新按鈕 -->
+                    <div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                        <h2 style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary); margin: 0; font-family: var(--font-sans);">帳務與資產總覽</h2>
+                        <button class="refresh-btn" id="btn-refresh-dashboard" title="更新全頁帳務資訊" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; width: auto; height: auto;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                            <span style="font-size: 0.85rem; font-weight: 500;">更新資訊</span>
+                        </button>
+                    </div>
                     <!-- T+2 違約交割缺口警示條（預設隱藏，低調橘黃色） -->
                     <div class="t2-alert-bar" id="t2-alert-bar" style="display: none;">
                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -384,6 +392,9 @@
                     <div class="card" style="margin-bottom: 24px;">
                         <div class="card-header">
                             <span class="card-title">停利停損試算</span>
+                            <button class="refresh-btn" id="btn-refresh-tpsl" title="手動更新試算與現價">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                            </button>
                         </div>
                         <div class="tpsl-controls">
                             <span class="form-label">試算幅度 ±</span>
@@ -433,6 +444,9 @@
                     <div class="card">
                         <div class="card-header">
                             <span class="card-title">證券庫存部位列表 (點擊代碼即可開啟下單面板)</span>
+                            <button class="refresh-btn" id="btn-refresh-positions" title="手動更新即時庫存與現價">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                            </button>
                         </div>
                         <div class="table-container mask-block">
                             <table class="data-table" id="stock-positions-table">
@@ -466,9 +480,14 @@
                         <div class="card">
                             <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
                                 <span class="card-title">自選監控清單 (點擊商品開啟右側明細)</span>
-                                <div class="watchlist-toggle-wrap" style="display: flex; align-items: center; gap: 6px;">
-                                    <input type="checkbox" id="toggle-sparkline" style="cursor: pointer; width: 14px; height: 14px;">
-                                    <label for="toggle-sparkline" style="font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; user-select: none;" title="關閉時不進行走勢繪圖，以節省網路流量與系統效能">顯示趨勢圖</label>
+                                <div class="watchlist-toggle-wrap" style="display: flex; align-items: center; gap: 10px;">
+                                    <div style="display: flex; align-items: center; gap: 6px;">
+                                        <input type="checkbox" id="toggle-sparkline" style="cursor: pointer; width: 14px; height: 14px;">
+                                        <label for="toggle-sparkline" style="font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; user-select: none;" title="關閉時不進行走勢繪圖，以節省網路流量與系統效能">顯示趨勢圖</label>
+                                    </div>
+                                    <button class="refresh-btn" id="btn-refresh-watchlist" title="手動更新自選行情" style="width: 28px; height: 28px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                    </button>
                                 </div>
                             </div>
                             
@@ -488,9 +507,14 @@
                         <div class="card" id="watchlist-detail-card" style="opacity: 0.5; pointer-events: none;">
                             <div class="card-header">
                                 <span class="card-title" id="detail-card-title">商品詳細資訊</span>
-                                <button class="btn-icon" id="btn-remove-watchlist" style="display: none;" title="從監控清單移除">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    <button class="refresh-btn" id="btn-refresh-detail" title="手動更新此商品行情">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                    </button>
+                                    <button class="btn-icon" id="btn-remove-watchlist" style="display: none;" title="從監控清單移除">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    </button>
+                                </div>
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 16px;">
                                 <div>
@@ -550,7 +574,12 @@
                         <div class="card">
                             <div class="card-header">
                                 <span class="card-title">美股自選監控 (點擊商品開啟右側明細)</span>
-                                <span class="metric-subtitle" id="us-market-status">行情來源: Yahoo Finance (延遲約 15 分鐘)</span>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <span class="metric-subtitle" id="us-market-status">行情來源: Yahoo Finance (延遲約 15 分鐘)</span>
+                                    <button class="refresh-btn" id="btn-refresh-us" title="手動更新美股行情" style="width: 28px; height: 28px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                    </button>
+                                </div>
                             </div>
                             <div class="watchlist-container">
                                 <div class="watchlist-search">
@@ -567,9 +596,14 @@
                         <div class="card" id="us-detail-card" style="opacity: 0.5; pointer-events: none;">
                             <div class="card-header">
                                 <span class="card-title">商品詳細資訊</span>
-                                <button class="btn-icon" id="btn-remove-us" style="display: none;" title="從監控清單移除">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    <button class="refresh-btn" id="btn-refresh-us-detail" title="手動更新此商品行情">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                    </button>
+                                    <button class="btn-icon" id="btn-remove-us" style="display: none;" title="從監控清單移除">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    </button>
+                                </div>
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 16px;">
                                 <div>

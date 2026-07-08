@@ -60,6 +60,34 @@ function initUsMarket() {
             }
         });
     });
+
+    // 綁定美股手動更新按鈕
+    const refreshUsBtn = document.getElementById('btn-refresh-us');
+    if (refreshUsBtn) {
+        refreshUsBtn.addEventListener('click', () => {
+            handleRefreshAction('btn-refresh-us', async () => {
+                await updateUsQuotes();
+            });
+        });
+    }
+
+    const refreshUsDetailBtn = document.getElementById('btn-refresh-us-detail');
+    if (refreshUsDetailBtn) {
+        refreshUsDetailBtn.addEventListener('click', () => {
+            handleRefreshAction('btn-refresh-us-detail', async () => {
+                if (usState.selected) {
+                    await updateUsQuotes();
+                    const activeTab = document.querySelector('#us-chart-tabs .detail-tab.active');
+                    const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'tick';
+                    if (tabName === 'ma') {
+                        await renderUsMAChart(usState.selected);
+                    } else {
+                        renderUsTickChart(usState.selected);
+                    }
+                }
+            });
+        });
+    }
 }
 
 function startUsMarket() {
