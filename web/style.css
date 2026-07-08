@@ -1626,3 +1626,43 @@ body.boss-mode .mask-block::after {
     text-decoration: underline;
 }
 
+/* ── 手動更新按鈕樣式 (Manual Refresh Buttons) ── */
+.refresh-btn {
+    border: 1px solid var(--border-color);
+    background: none;
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all var(--transition-fast);
+}
+
+.refresh-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--bg-tertiary);
+    border-color: var(--border-hover);
+}
+
+.refresh-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.refresh-btn svg {
+    transition: transform var(--transition-fast);
+    transform-origin: center;
+}
+
+.refresh-btn.spinning svg {
+    animation: refresh-spin 0.8s linear infinite;
+}
+
+@keyframes refresh-spin {
+    to { transform: rotate(360deg); }
+}
+
+

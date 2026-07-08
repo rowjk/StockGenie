@@ -150,7 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     for (const fn of [initSettings, initNavigation, initWatchlistControls,
                       initDrawerControls, initHistoryControls, initIdleTimeout, initQuickOrder,
                       initPrivacyControls, initCardConfig, initUsMarket, initCredentialsMgmt, initOrderMgmt, initTpsl,
-                      initDemoMode, initPnlDateRange]) {
+                      initDemoMode, initPnlDateRange, initManualRefresh]) {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
 
@@ -687,11 +687,11 @@ function isTradingHours() {
 // fetchData 呼叫計數器，用於降頻控制
 let _fetchCount = 0;
 
-async function fetchData() {
+async function fetchData(force = false) {
     if (!state.selectedAccount) return;
-    _fetchCount++;
+    if (!force) _fetchCount++;
     // 每 4 次才執行一次慢速 API（庫存、交割款、額度）≈ 每 60 秒
-    const doSlowApis = (_fetchCount % 4 === 1);
+    const doSlowApis = force || (_fetchCount % 4 === 1);
 
     const stockAcc = state.accounts.find(a => a.account_type === 'S');
 
@@ -724,6 +724,11 @@ async function fetchData() {
         tasks.push(updateWatchlistSnapshots());
     }
     await Promise.allSettled(tasks);
+
+    // [SA優化] 如果是強制的完整重刷，也在此時一併更新庫存快照現價
+    if (force && stockAcc && state.stockPositions && state.stockPositions.length > 0) {
+        await updateStockPositionSnapshots();
+    }
 
     // 交割款預估餘額依賴最新 balance，全部完成後再渲染
     renderSettlements();
@@ -1343,6 +1348,86 @@ function initTpsl() {
     // 切到本分頁時即重繪（不等下一輪 fetchData）
     const navItem = document.querySelector('.sidebar-item[data-view="tpsl"]');
     if (navItem) navItem.addEventListener('click', renderTpsl);
+}
+
+// ── 手動更新按鈕控制 (Manual Refresh Actions) ──
+async function handleRefreshAction(buttonId, refreshTaskFn) {
+    const button = document.getElementById(buttonId);
+    if (!button || button.classList.contains('spinning')) return;
+
+    button.classList.add('spinning');
+    button.disabled = true;
+
+    const startTime = Date.now();
+
+    try {
+        await refreshTaskFn();
+    } catch (error) {
+        console.error(`[手動更新失敗] ${buttonId}:`, error);
+    } finally {
+        const elapsed = Date.now() - startTime;
+        const remainingDelay = Math.max(0, 600 - elapsed);
+        
+        setTimeout(() => {
+            button.classList.remove('spinning');
+            button.disabled = false;
+        }, remainingDelay);
+    }
+}
+
+function initManualRefresh() {
+    const getStockAcc = () => state.accounts.find(a => a.account_type === 'S');
+
+    // 輔助函式：安全綁定點擊事件與手動更新
+    const bindClick = (id, taskFn) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('click', () => handleRefreshAction(id, taskFn));
+        }
+    };
+
+    // 1. 資訊總覽頁面 - 統一手動更新按鈕
+    bindClick('btn-refresh-dashboard', async () => {
+        await fetchData(true);
+    });
+
+    // 2. 證券庫存部位列表 (Positions分頁)
+    bindClick('btn-refresh-positions', async () => {
+        const acc = getStockAcc();
+        if (acc) {
+            await fetchStockPositions(acc);
+            await updateStockPositionSnapshots();
+        }
+    });
+
+    // 3. 自選監控清單
+    bindClick('btn-refresh-watchlist', async () => {
+        await updateWatchlistSnapshots();
+    });
+
+    // 4. 自選商品詳細資訊
+    bindClick('btn-refresh-detail', async () => {
+        const code = document.getElementById('detail-code').textContent;
+        if (code && code !== '----') {
+            await updateWatchlistSnapshots();
+            const activeTab = document.querySelector('#watchlist-chart-tabs .detail-tab.active');
+            const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'tick';
+            if (tabName === 'ma') {
+                await renderDetailMAChart(code);
+            } else {
+                await renderDetailTickChart(code);
+            }
+        }
+    });
+
+    // 5. 停利停損試算
+    bindClick('btn-refresh-tpsl', async () => {
+        await Promise.allSettled([
+            updateStockPositionSnapshots(),
+            updateWatchlistSnapshots()
+        ]);
+        renderTpsl();
+    });
 }
 
 // ── v1.7.1 委託單管理（改價/減量/刪單；經 OpenAPI 確認三端點均以 trade_id 識別） ──
