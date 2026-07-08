@@ -19,7 +19,7 @@
 
 ## 開發守則
 
-* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.12.2`）：`index.html` footer + 本 README 版本紀錄.
+* 任何程式修改**必須同步更新版本號**且**必須先跑過單元測試**（目前 `v1.12.3`）：`index.html` footer + 本 README 版本紀錄.
 * 文件詳情：操作手冊 `walkthrough.md`、設計規格 `dashboard_design.md`、任務清單 `task.md`、設計評審 `design_review.md` 與實作計畫 `implementation_plan.md`。
 
 ## 安全性
@@ -31,6 +31,7 @@
 
 ## 版本紀錄
 
+* **v1.12.3**（2026-07-08）：證券持倉現價快照優化——新增快速輪詢週期的庫存現價快照查詢，建立基準 Delta 補償模型估算損益與損益率，將庫存現價與損益更新從 60 秒降至 15 秒更新一次；同時重置切換帳戶時的輪詢計數，消除切換後的數據刷新延遲。
 * **v1.12.2**（2026-07-08）：自動連線修復與進程守護——在 Proxy 層針對上游 HTTP 500 錯誤偵測 `SessionNotEstablished` 並自動背景重啟 `shioaji.exe`；同時在連線失敗時檢測並重啟已退出的 Shioaji 守護進程，確保 K 線走勢圖與實時數據通道的自我修復與高可用性。
 * **v1.12.1**（2026-07-02）：自選監控支援期貨（FUT）合約。新增自選股時，若股票與大盤指數皆查無代碼，Fallback 查詢期貨合約（如台指期 `TXFR1`、小台指 `MXFR1`）；判定為期貨時，比照大盤指數設為唯讀觀察商品並隱藏下單按鈕；同步於 `demo.js` 加入近月大台、小台期貨之假數據。
 * **v1.12.0**（2026-07-02）：程式碼品質強化版——修復資產歷史 read-modify-write 競態（三個 handler 改為持鎖整段操作）；修復 SSE proxy thread 永久阻塞（加入 socket 層 60s 讀取 timeout）；新增 `.env` 全域快取（`get_cached_env`）避免每次下單都讀磁碟、切換設定檔時同步更新；`_kill_shioaji_on_port` 移除 `shell=True` 改用 list 參數消除命令注入風險；統一 `handle_post_history` 與 `handle_delete_history` 錯誤回應為 JSON 格式；Windows Job Object 移至 `main()` 提前初始化確保所有子進程皆受管控。

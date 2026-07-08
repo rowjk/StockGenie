@@ -664,6 +664,7 @@ function showOrderNotification(data) {
 // ── 定時拉取資料控制 ────────────────────────────────────────────────────
 function restartPolling() {
     stopPolling();
+    _fetchCount = 0; // [v1.12.3 優化] 重置計數器，確保下一次 fetchData 立即執行權威慢速 API
     fetchData(); // 立即重新抓取一次
     state.pollingTimer = setInterval(fetchData, state.refreshInterval);
 }
@@ -710,6 +711,11 @@ async function fetchData() {
         const rangeIncludesToday = (todayStr >= state.pnlStartDate && todayStr <= state.pnlEndDate);
         if (rangeIncludesToday) {
             tasks.push(fetchTodayRealizedPnl(stockAcc));
+        }
+    } else if (stockAcc && !doSlowApis) {
+        // [v1.12.3 優化] 庫存部位即時現價更新：在不呼叫慢速 API 的週期中，透過快照 API 即時更新庫存價格與損益
+        if (state.activeView !== 'us-market' && state.stockPositions && state.stockPositions.length > 0) {
+            tasks.push(updateStockPositionSnapshots());
         }
     }
     // 自選股即時資訊（最需要即時，不再被帳務查詢卡住）
@@ -832,12 +838,91 @@ async function fetchStockPositions(stockAcc) {
                 state.stockPositionUnit = 'Share';
             }
 
+            // [v1.12.3 優化] 初始化基準點，用於後續快速快照的 Delta 計算
+            if (state.stockPositions && Array.isArray(state.stockPositions)) {
+                state.stockPositions.forEach(pos => {
+                    pos.base_last_price = pos.last_price;
+                    pos.base_pnl = pos.pnl;
+                });
+            }
+
             await enrichPositionNames();
             renderStockPositions();
         } catch (e) {
             console.error("獲取股票庫存失敗", e);
             renderStockPositions();
         }
+}
+
+// [v1.12.3 優化] 透過快照 API 即時更新庫存部位價格與損益，突破 60 秒慢速帳務 API 限制
+async function updateStockPositionSnapshots() {
+    if (!state.stockPositions || state.stockPositions.length === 0) return;
+
+    const contracts = state.stockPositions.map(pos => ({
+        security_type: 'STK',
+        exchange: pos.exchange || 'TSE',
+        code: pos.code
+    }));
+
+    try {
+        const CHUNK_SIZE = 10;
+        const snapshots = [];
+        for (let i = 0; i < contracts.length; i += CHUNK_SIZE) {
+            const chunk = contracts.slice(i, i + CHUNK_SIZE);
+            const resp = await smartFetch(`${API_BASE}/data/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contracts: chunk })
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                snapshots.push(...data);
+            } else {
+                console.warn(`[庫存快照] 查詢快照失敗 (chunk ${Math.floor(i/CHUNK_SIZE) + 1}) HTTP ${resp.status}`);
+            }
+        }
+
+        if (snapshots.length > 0) {
+            let hasChanges = false;
+            snapshots.forEach(snap => {
+                const pos = state.stockPositions.find(p => p.code === snap.code);
+                if (pos && snap.close > 0 && pos.last_price !== snap.close) {
+                    pos.last_price = snap.close;
+
+                    const shares = state.stockPositionUnit === 'Share'
+                        ? pos.quantity
+                        : pos.quantity * lotMultiplier(pos);
+
+                    const isBuy = pos.direction === 'Buy' || pos.direction === 'B' || !pos.direction;
+                    const multiplier = isBuy ? 1 : -1;
+
+                    // 應用數學補償模型計算 PnL，保留券商折讓手續費與稅金之基準
+                    if (pos.base_pnl !== undefined && pos.base_last_price > 0) {
+                        const priceDelta = snap.close - pos.base_last_price;
+                        pos.pnl = pos.base_pnl + (priceDelta * shares * multiplier);
+                    } else if (pos.price > 0) {
+                        pos.pnl = (snap.close - pos.price) * shares * multiplier;
+                    }
+
+                    // 重新計算損益率
+                    const totalCost = pos.price * shares;
+                    if (totalCost > 0) {
+                        pos.pnl_rate = (pos.pnl / totalCost) * 100;
+                    } else {
+                        pos.pnl_rate = 0;
+                    }
+                    hasChanges = true;
+                }
+            });
+
+            if (hasChanges) {
+                renderStockPositions();
+                renderTpsl(); // 同步更新停利停損試算數據
+            }
+        }
+    } catch (e) {
+        console.error("[庫存快照] 即時現價刷新異常:", e);
+    }
 }
 
 // 取得近三日交割款（渲染交由 fetchData 在全部完成後統一執行）
