@@ -1312,13 +1312,36 @@ async function addTpslCustom() {
 
     let price = parseFloat(priceEl.value);
     let name = '';
-    // 買價留空 → 自動帶參考價（Demo 模式由攔截器供應假價）
+    // 買價留空 → 自動帶昨日參考價（優先以快照計算以避免除權息/分割前舊合約快取）
     try {
-        const resp = await smartFetch(`${API_BASE}/data/contracts/${encodeURIComponent(code)}?security_type=STK`);
-        if (resp.ok) {
-            const c = await resp.json();
+        const [cResp, sResp] = await Promise.allSettled([
+            smartFetch(`${API_BASE}/data/contracts/${encodeURIComponent(code)}?security_type=STK`),
+            smartFetch(`${API_BASE}/data/snapshots`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contracts: [{ security_type: 'STK', exchange: 'TSE', code }] })
+            })
+        ]);
+        let contractRef = 0;
+        if (cResp.status === 'fulfilled' && cResp.value.ok) {
+            const c = await cResp.value.json();
             name = c.name || '';
-            if (!(price > 0)) price = Number(c.reference) || 0;
+            contractRef = Number(c.reference) || 0;
+        }
+        let snapRef = 0;
+        if (sResp.status === 'fulfilled' && sResp.value.ok) {
+            const snaps = await sResp.value.json();
+            if (snaps && snaps[0]) {
+                const snap = snaps[0];
+                if (snap.close != null && snap.change_price != null) {
+                    snapRef = Math.round((snap.close - snap.change_price) * 100) / 100;
+                } else {
+                    snapRef = Number(snap.reference_price ?? snap.reference) || 0;
+                }
+            }
+        }
+        if (!(price > 0)) {
+            price = snapRef > 0 ? snapRef : contractRef;
         }
     } catch (e) { console.error('查詢參考價失敗', e); }
     if (!(price > 0)) { alert('查無參考價，請手動輸入假設買價。'); return; }
@@ -1902,8 +1925,13 @@ async function updateWatchlistSnapshots() {
                     // 委買/委賣掛單張數（HTTP snapshot 提供最佳一檔的委託量）
                     if (snap.buy_volume != null) item.buy_volume = snap.buy_volume;
                     if (snap.sell_volume != null) item.sell_volume = snap.sell_volume;
-                    // 昨日參考價（Shioaji HTTP API 可能用 reference_price 或 reference）
-                    const refVal = snap.reference_price ?? snap.reference;
+                    // 昨日參考價（優先由今日收盤價與漲跌點數推算，以防 contracts API 殘留除權息或分割前舊資料；無則從 snapshot 或 fallback 讀取）
+                    let refVal = null;
+                    if (snap.close != null && snap.change_price != null) {
+                        refVal = Math.round((snap.close - snap.change_price) * 100) / 100;
+                    } else {
+                        refVal = snap.reference_price ?? snap.reference;
+                    }
                     if (refVal != null && refVal !== 0) item.reference = refVal;
                     
                     // 記錄價格陣列用於繪製 sparkline 走勢圖
@@ -2093,14 +2121,17 @@ async function selectWatchlistItem(code) {
     // 若 reference（昨日參考價）尚未快取，從 contracts API 補抓（非阻塞）
     const item = state.watchlist.find(w => w.code === code);
     if (item && !item.reference) {
-        smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`)
+        const secType = item.security_type || 'STK';
+        smartFetch(`${API_BASE}/data/contracts/${code}?security_type=${secType}`)
             .then(r => r.ok ? r.json() : null)
             .then(c => {
                 if (c && c.reference) {
-                    item.reference = c.reference;
-                    // 如果細節視窗仍顯示此股票，即時更新
-                    if (document.getElementById('detail-code').textContent === code) {
-                        document.getElementById('detail-ref').textContent = c.reference;
+                    if (!item.reference) {
+                        item.reference = c.reference;
+                        // 如果細節視窗仍顯示此股票，即時更新
+                        if (document.getElementById('detail-code').textContent === code) {
+                            document.getElementById('detail-ref').textContent = formatDecimal(c.reference, 2);
+                        }
                     }
                 }
             })
@@ -2533,16 +2564,41 @@ async function refreshDrawerMarket(code, exchange, fallbackLast) {
             }),
         ]);
         if (_drawerMarket.code !== code) return; // 期間已切換商品
-        if (cResp.status === 'fulfilled' && cResp.value.ok) {
-            const c = await cResp.value.json();
-            _drawerMarket.ref = Number(c.reference) || 0;
-            _drawerMarket.limitUp = Number(c.limit_up) || 0;
-            _drawerMarket.limitDown = Number(c.limit_down) || 0;
-        }
+        let snapRef = 0;
         if (sResp.status === 'fulfilled' && sResp.value.ok) {
             const snaps = await sResp.value.json();
-            const close = Array.isArray(snaps) && snaps[0] && Number(snaps[0].close);
-            if (close > 0) _drawerMarket.last = close;
+            const snap = Array.isArray(snaps) && snaps[0];
+            if (snap) {
+                const close = Number(snap.close) || 0;
+                if (close > 0) _drawerMarket.last = close;
+                // 優先從快照推算精準的昨日參考價（防除權息/分割等舊合約快取干擾）
+                if (snap.close != null && snap.change_price != null) {
+                    snapRef = Math.round((snap.close - snap.change_price) * 100) / 100;
+                } else {
+                    snapRef = Number(snap.reference_price ?? snap.reference) || 0;
+                }
+            }
+        }
+        if (cResp.status === 'fulfilled' && cResp.value.ok) {
+            const c = await cResp.value.json();
+            const cRef = Number(c.reference) || 0;
+            // 如果從快照有算得參考價，且與合約回傳不同，說明合約快取可能過期（例如股票分割）
+            // 此時以快照參考價為準，並同比例縮放漲跌停限制
+            if (snapRef > 0 && cRef > 0 && Math.abs(snapRef - cRef) > 0.01) {
+                const ratio = snapRef / cRef;
+                _drawerMarket.ref = snapRef;
+                _drawerMarket.limitUp = Math.round(Number(c.limit_up) * ratio * 100) / 100 || 0;
+                _drawerMarket.limitDown = Math.round(Number(c.limit_down) * ratio * 100) / 100 || 0;
+            } else {
+                _drawerMarket.ref = snapRef > 0 ? snapRef : cRef;
+                _drawerMarket.limitUp = Number(c.limit_up) || 0;
+                _drawerMarket.limitDown = Number(c.limit_down) || 0;
+            }
+        } else if (snapRef > 0) {
+            // 合約查詢失敗，但有快照參考價，則依標準 10% 漲跌幅概算限制
+            _drawerMarket.ref = snapRef;
+            _drawerMarket.limitUp = Math.round(snapRef * 1.1 * 100) / 100;
+            _drawerMarket.limitDown = Math.round(snapRef * 0.9 * 100) / 100;
         }
     } catch (e) {
         console.error('查詢市價/漲跌幅失敗', e);
@@ -3194,12 +3250,26 @@ function initQuickOrder() {
             return;
         }
 
-        // 3. 打 contracts API
+        // 3. 打 contracts API 與 snapshots API 補齊最新價格
         try {
-            const resp = await smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`);
-            if (resp.ok) {
-                const contract = await resp.json();
-                openOrderDrawer(contract.code, 'STK', contract.reference || 0, contract.exchange || 'TSE');
+            const [cResp, sResp] = await Promise.allSettled([
+                smartFetch(`${API_BASE}/data/contracts/${code}?security_type=STK`),
+                smartFetch(`${API_BASE}/data/snapshots`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contracts: [{ security_type: 'STK', exchange: 'TSE', code }] })
+                })
+            ]);
+            if (cResp.status === 'fulfilled' && cResp.value.ok) {
+                const contract = await cResp.value.json();
+                let lastPrice = Number(contract.reference) || 0;
+                if (sResp.status === 'fulfilled' && sResp.value.ok) {
+                    const snaps = await sResp.value.json();
+                    if (snaps && snaps[0] && snaps[0].close > 0) {
+                        lastPrice = snaps[0].close;
+                    }
+                }
+                openOrderDrawer(contract.code, 'STK', lastPrice, contract.exchange || 'TSE');
                 input.value = '';
             } else {
                 alert(`找不到股票代號 ${code}`);
