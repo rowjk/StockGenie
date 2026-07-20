@@ -689,8 +689,43 @@ def start_shioaji_server(env_dict):
             print(f"正在啟動 Shioaji API 伺服器，執行檔路徑：{shioaji_bin}")
             shioaji_proc = subprocess.Popen(
                 [shioaji_bin, "server", "start", "--no-open"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
                 env=run_env
             )
+
+            def log_reader(stream, out_stream):
+                try:
+                    for line in iter(stream.readline, ''):
+                        if not line:
+                            break
+                        out_stream.write(line)
+                        out_stream.flush()
+                        
+                        # 檢測登入失敗（簽章時間逾時）
+                        if "Sign data is timeout" in line:
+                            out_stream.write(
+                                "\n\033[91m" + "="*80 + "\n"
+                                "[排障提示] 偵測到 Shioaji 登入失敗：Sign data is timeout (簽章時間逾時)\n"
+                                "👉 原因：您的本機電腦系統時間與永豐伺服器標準時間不同步（偏差 > 5 秒）。\n"
+                                "👉 解決方案：\n"
+                                "   1. Windows 右下角時間右鍵 -> 選擇「調整日期與時間」-> 點選「立即同步」按鈕。\n"
+                                "   2. 或以系統管理員權限開啟 PowerShell 執行：w32tm /resync\n"
+                                "👉 同步時間後，系統將會自動重啟服務，或請手動重開本儀表板。\n"
+                                "="*80 + "\033[0m\n"
+                            )
+                            out_stream.flush()
+                except Exception:
+                    pass
+
+            t_out = threading.Thread(target=log_reader, args=(shioaji_proc.stdout, sys.stdout), daemon=True)
+            t_err = threading.Thread(target=log_reader, args=(shioaji_proc.stderr, sys.stderr), daemon=True)
+            t_out.start()
+            t_err.start()
+
             # 將子進程指派給 Windows Job Object（已在 main() 提前建立）
             if _win_job_handle is not None and sys.platform == "win32":
                 ctypes.windll.kernel32.AssignProcessToJobObject.argtypes = [
