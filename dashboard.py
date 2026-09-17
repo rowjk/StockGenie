@@ -33,7 +33,7 @@ CREDENTIALS_FILE = WORKSPACE_DIR / "credentials.json"
 ENV_FILE = WORKSPACE_DIR / ".env"
 WATCHLIST_FILE = WORKSPACE_DIR / "watchlist.json"
 US_WATCHLIST_FILE = WORKSPACE_DIR / "us_watchlist.json"
-VERIFICATION_CODE = "PEA6"  # 變更設定的二次安全驗證碼（防肉眼窺視，非防本機抓包）
+VERIFICATION_CODE = os.environ.get("VERIFICATION_CODE", "PEA6")  # 變更設定的二次安全驗證碼（防肉眼窺視，非防本機抓包）
 
 # ── v1.10.0 同源防護（CSRF / DNS rebinding）──────────────────────────────
 # 8081 過去回應 Access-Control-Allow-Origin: * 且無任何來源驗證，瀏覽器中任意

@@ -9,7 +9,7 @@
 | Matrix | `#00ff41` | `#1f8a3d` | 黑底綠字輝光；強制暗色並鎖定主題鈕 |
 
 ## 佈局
-64px 極簡側欄（總覽/庫存/自選/美股/API 狀態/設定，系統圖示偽裝）；Header：帳號遮蔽顯示（`證券 (*763)`）、連線燈號、DEMO 徽章（v1.6）、快速下單框、配色切換、Boss Key 與 Terminal Mode 鈕。總覽卡片可自訂顯示（localStorage）。
+64px 極簡側欄（總覽/庫存/自選/美股/API 狀態/設定，系統圖示偽裝）；Header：帳號遮蔽顯示（`證券 (*1234)`）、連線燈號、DEMO 徽章（v1.6）、快速下單框、配色切換、Boss Key 與 Terminal Mode 鈕。總覽卡片可自訂顯示（localStorage）。
 
 ## 關鍵技術決策
 1. **原生技術棧**：無第三方庫，HTML5 + CSS Variables + ES6 + Canvas。

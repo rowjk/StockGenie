@@ -1,7 +1,7 @@
 # 專案協作規則（Claude 必讀）
 
 ## Git
-- **未經 James 明確指令，不得 `git push`。** commit 可以照常在本地做。
+- **未經使用者明確指令，不得 `git push`。** commit 可以照常在本地做。
 - Push 與 Windows 實機操作走 Desktop Commander（本機有 git 憑證）；沙箱內無憑證。
 
 ## 開發守則
