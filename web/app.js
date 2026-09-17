@@ -154,6 +154,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         try { fn(); } catch (e) { console.error(`[init] ${fn.name} 失敗:`, e); }
     }
 
+    // 立即載入並渲染自選清單（防止伺服器尚未連線時畫面空白，支援跨瀏覽器與本地雙向同步）
+    try { await initWatchlist(); } catch (e) { console.error('[init] initWatchlist 失敗:', e); }
+
     // 檢查與永豐 API 伺服器的連線狀態
     await checkServerStatus();
 
@@ -1737,22 +1740,56 @@ function renderSettlements() {
 // ── 自選股監控管理 ──────────────────────────────────────────────────────
 async function initWatchlist() {
     const defaultList = ['2330', '2317', '0050'];
-    const saved = localStorage.getItem('watchlist');
+    let loaded = false;
 
-    if (saved) {
-        state.watchlist = JSON.parse(saved);
-        // 如果處於真實模式，將先前 Demo 模式遺留下來的「演示股」名稱清除，促使系統重新向後端查詢真實名稱
-        if (!state.demoMode) {
-            state.watchlist.forEach(item => {
-                if (item.name && (item.name.startsWith('演示股 ') || item.name.startsWith('演示股'))) {
-                    item.name = '';
-                }
-            });
+    // 1. 優先嘗試從後端硬碟持久化檔案讀取（實現跨瀏覽器與跨 Origin 同步）
+    try {
+        const resp = await smartFetch(`${LOCAL_API_BASE}/watchlist`);
+        if (resp.ok) {
+            const serverList = await resp.json();
+            if (Array.isArray(serverList) && serverList.length > 0) {
+                state.watchlist = serverList;
+                loaded = true;
+                localStorage.setItem('watchlist', JSON.stringify(state.watchlist));
+            }
         }
-    } else {
+    } catch (e) {
+        console.warn('無法從伺服器載入自選清單，將使用本地快取', e);
+    }
+
+    // 2. 後端無資料或斷線時，回退至本地 localStorage
+    if (!loaded) {
+        const saved = localStorage.getItem('watchlist');
+        if (saved) {
+            try {
+                const localList = JSON.parse(saved);
+                if (Array.isArray(localList) && localList.length > 0) {
+                    state.watchlist = localList;
+                    loaded = true;
+                    // 若後端為空，將本地資料回填同步至後端硬碟
+                    syncWatchlistToServer();
+                }
+            } catch (e) {}
+        }
+    }
+
+    // 3. 兩者皆無時，初始化預設清單
+    if (!loaded) {
         state.watchlist = defaultList.map(code => ({ code, name: '', exchange: 'TSE', prices: [] }));
         saveWatchlistLocal();
     }
+
+    // 如果處於真實模式，將先前 Demo 模式遺留下來的「演示股」名稱清除，促使系統重新向後端查詢真實名稱
+    if (!state.demoMode) {
+        state.watchlist.forEach(item => {
+            if (item.name && (item.name.startsWith('演示股 ') || item.name.startsWith('演示股'))) {
+                item.name = '';
+            }
+        });
+    }
+
+    // 立即渲染一次，避免任何留白延遲
+    renderWatchlist();
 
     // snapshot API 不保證有名稱，針對缺名稱的項目補查 contracts endpoint
     const nameless = state.watchlist.filter(item => !item.name);
@@ -1786,8 +1823,26 @@ async function initWatchlist() {
     renderWatchlist();
 }
 
+function syncWatchlistToServer() {
+    if (!Array.isArray(state.watchlist) || state.watchlist.length === 0) return;
+    const cleanList = state.watchlist.map(item => ({
+        code: item.code,
+        name: item.name || '',
+        exchange: item.exchange || 'TSE',
+        security_type: item.security_type || 'STK',
+        reference: item.reference || 0,
+        prices: Array.isArray(item.prices) ? item.prices.slice(-30) : []
+    }));
+    smartFetch(`${LOCAL_API_BASE}/watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanList)
+    }).catch(e => console.warn('同步自選清單至伺服器失敗', e));
+}
+
 function saveWatchlistLocal() {
     localStorage.setItem('watchlist', JSON.stringify(state.watchlist));
+    syncWatchlistToServer();
 }
 
 function initWatchlistControls() {

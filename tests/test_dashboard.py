@@ -211,5 +211,65 @@ class TestDpapi(unittest.TestCase):
             dashboard.CREDENTIALS_FILE = orig
 
 
+class TestWatchlistValidation(unittest.TestCase):
+    """自選清單規格驗證：格式錯誤或惡意過大資料必須被攔截。"""
+
+    V_TW = staticmethod(dashboard.DashboardHandler._validate_watchlist_payload)
+    V_US = staticmethod(dashboard.DashboardHandler._validate_us_watchlist_payload)
+
+    def test_valid_tw_watchlist_passes(self):
+        sample = [
+            {"code": "2330", "name": "台積電", "exchange": "TSE", "security_type": "STK"},
+            {"code": "TXFR1", "name": "臺股期貨近月", "exchange": "TAIFEX", "security_type": "FUT"}
+        ]
+        self.assertEqual(self.V_TW(sample), [])
+
+    def test_tw_watchlist_rejects_non_list_or_bad_items(self):
+        self.assertTrue(self.V_TW("not a list"))
+        self.assertTrue(self.V_TW([{"name": "missing code"}]))
+        self.assertTrue(self.V_TW([{"code": ""}]))
+        self.assertTrue(self.V_TW([{"code": "A" * 25}]))
+        self.assertTrue(self.V_TW([{"code": "2330"}] * 51))
+
+    def test_valid_us_watchlist_passes(self):
+        sample = [
+            {"symbol": "TSM", "name": "Taiwan Semiconductor"},
+            {"symbol": "^GSPC", "name": "S&P 500"}
+        ]
+        self.assertEqual(self.V_US(sample), [])
+
+    def test_us_watchlist_rejects_bad_payload(self):
+        self.assertTrue(self.V_US("not a list"))
+        self.assertTrue(self.V_US([{"name": "missing symbol"}]))
+        self.assertTrue(self.V_US([{"symbol": ""}]))
+        self.assertTrue(self.V_US([{"symbol": "B" * 25}]))
+        self.assertTrue(self.V_US([{"symbol": "TSM"}] * 51))
+
+    def test_handler_get_watchlist_returns_json(self):
+        import io, json
+        class DummyHandler(dashboard.DashboardHandler):
+            def __init__(self):
+                self.headers = {'Host': '127.0.0.1:8081', 'Origin': 'http://127.0.0.1:8081'}
+                self.wfile = io.BytesIO()
+            def send_response(self, code):
+                self.resp_code = code
+            def send_header(self, k, v):
+                pass
+            def end_headers(self):
+                pass
+
+        h = DummyHandler()
+        h.handle_get_watchlist()
+        data = json.loads(h.wfile.getvalue().decode('utf-8'))
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 9)
+
+        h_us = DummyHandler()
+        h_us.handle_get_us_watchlist()
+        data_us = json.loads(h_us.wfile.getvalue().decode('utf-8'))
+        self.assertIsInstance(data_us, list)
+        self.assertEqual(len(data_us), 7)
+
+
 if __name__ == "__main__":
     unittest.main()

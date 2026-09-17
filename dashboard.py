@@ -31,6 +31,8 @@ WEB_DIR = WORKSPACE_DIR / "web"
 HISTORY_FILE = WORKSPACE_DIR / "asset_history.json"
 CREDENTIALS_FILE = WORKSPACE_DIR / "credentials.json"
 ENV_FILE = WORKSPACE_DIR / ".env"
+WATCHLIST_FILE = WORKSPACE_DIR / "watchlist.json"
+US_WATCHLIST_FILE = WORKSPACE_DIR / "us_watchlist.json"
 VERIFICATION_CODE = "PEA6"  # 變更設定的二次安全驗證碼（防肉眼窺視，非防本機抓包）
 
 # ── v1.10.0 同源防護（CSRF / DNS rebinding）──────────────────────────────
@@ -51,6 +53,8 @@ shioaji_proc_lock = threading.Lock()
 # Windows Job Object 全域控制代碼與資產歷史線程鎖
 _win_job_handle = None
 _asset_history_lock = threading.Lock()
+_watchlist_lock = threading.Lock()
+_us_watchlist_lock = threading.Lock()
 
 # 自動重啟冷卻時間與鎖（防止多個併發請求重複觸發重啟）
 _last_auto_restart_time = 0
@@ -815,6 +819,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_get_trade_logs()
         elif self.path.startswith('/api/us-chart'):
             self.handle_us_chart()
+        elif self.path == '/api/watchlist':
+            self.handle_get_watchlist()
+        elif self.path == '/api/us-watchlist':
+            self.handle_get_us_watchlist()
         else:
             super().do_GET()
 
@@ -827,6 +835,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.handle_import_history()
         elif self.path == '/api/asset-history':
             self.handle_post_history()
+        elif self.path == '/api/watchlist':
+            self.handle_post_watchlist()
+        elif self.path == '/api/us-watchlist':
+            self.handle_post_us_watchlist()
         elif self.path == '/api/credentials/save':
             self.handle_save_credentials()
         elif self.path == '/api/credentials/switch':
@@ -1416,6 +1428,118 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             elif not math.isfinite(val) or val < 0:
                 errors.append(f"第 {i + 1} 筆 value 必須為非負的有限數值")
         return errors
+
+    @staticmethod
+    def _validate_watchlist_payload(data):
+        """回傳錯誤訊息清單；空清單代表通過。格式：[{code: str, ...}, ...]"""
+        errors = []
+        if not isinstance(data, list):
+            return ["自選清單必須為 JSON 陣列"]
+        if len(data) > 50:
+            return ["自選清單數量超過 50 檔上限"]
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                errors.append(f"第 {i + 1} 筆不是物件")
+                continue
+            code = item.get('code')
+            if not isinstance(code, str) or not code.strip():
+                errors.append(f"第 {i + 1} 筆缺少有效的股票代碼 code")
+            elif len(code.strip()) > 20:
+                errors.append(f"第 {i + 1} 筆代碼長度過長")
+        return errors
+
+    @staticmethod
+    def _validate_us_watchlist_payload(data):
+        """回傳錯誤訊息清單；空清單代表通過。格式：[{symbol: str, ...}, ...]"""
+        errors = []
+        if not isinstance(data, list):
+            return ["美股自選清單必須為 JSON 陣列"]
+        if len(data) > 50:
+            return ["美股自選清單數量超過 50 檔上限"]
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                errors.append(f"第 {i + 1} 筆不是物件")
+                continue
+            symbol = item.get('symbol')
+            if not isinstance(symbol, str) or not symbol.strip():
+                errors.append(f"第 {i + 1} 筆缺少有效的美股代碼 symbol")
+            elif len(symbol.strip()) > 20:
+                errors.append(f"第 {i + 1} 筆代號長度過長")
+        return errors
+
+    def handle_get_watchlist(self):
+        with _watchlist_lock:
+            if not WATCHLIST_FILE.exists():
+                data = []
+            else:
+                try:
+                    data = json.loads(WATCHLIST_FILE.read_text(encoding='utf-8'))
+                    if not isinstance(data, list):
+                        data = []
+                except Exception:
+                    data = []
+        self._send_json(data)
+
+    def handle_post_watchlist(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            self.send_json_error(400, "Bad Request: missing body")
+            return
+        post_data = self.rfile.read(content_length)
+        try:
+            payload = json.loads(post_data.decode('utf-8'))
+        except Exception as e:
+            self.send_json_error(400, f"Bad Request: invalid JSON ({e})")
+            return
+
+        errors = self._validate_watchlist_payload(payload)
+        if errors:
+            self.send_json_error(400, f"Validation failed: {'; '.join(errors)}")
+            return
+
+        with _watchlist_lock:
+            tmp = WATCHLIST_FILE.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(tmp, WATCHLIST_FILE)
+
+        self._send_json({"status": "ok", "count": len(payload)})
+
+    def handle_get_us_watchlist(self):
+        with _us_watchlist_lock:
+            if not US_WATCHLIST_FILE.exists():
+                data = []
+            else:
+                try:
+                    data = json.loads(US_WATCHLIST_FILE.read_text(encoding='utf-8'))
+                    if not isinstance(data, list):
+                        data = []
+                except Exception:
+                    data = []
+        self._send_json(data)
+
+    def handle_post_us_watchlist(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            self.send_json_error(400, "Bad Request: missing body")
+            return
+        post_data = self.rfile.read(content_length)
+        try:
+            payload = json.loads(post_data.decode('utf-8'))
+        except Exception as e:
+            self.send_json_error(400, f"Bad Request: invalid JSON ({e})")
+            return
+
+        errors = self._validate_us_watchlist_payload(payload)
+        if errors:
+            self.send_json_error(400, f"Validation failed: {'; '.join(errors)}")
+            return
+
+        with _us_watchlist_lock:
+            tmp = US_WATCHLIST_FILE.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(tmp, US_WATCHLIST_FILE)
+
+        self._send_json({"status": "ok", "count": len(payload)})
 
     def handle_get_history(self):
         history = self._read_history()

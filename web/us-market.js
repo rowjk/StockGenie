@@ -29,12 +29,41 @@ function loadUsWatchlistLocal() {
     return [...US_DEFAULT_ITEMS];
 }
 
-function saveUsWatchlistLocal() {
-    localStorage.setItem('usWatchlist', JSON.stringify(usState.watchlist));
+function syncUsWatchlistToServer() {
+    if (!Array.isArray(usState.watchlist) || usState.watchlist.length === 0) return;
+    const cleanList = usState.watchlist.map(i => ({ symbol: i.symbol, name: i.name || i.symbol }));
+    smartFetch(`${LOCAL_API_BASE}/us-watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanList)
+    }).catch(e => console.warn('同步美股清單至伺服器失敗', e));
 }
 
-function initUsMarket() {
+function saveUsWatchlistLocal() {
+    localStorage.setItem('usWatchlist', JSON.stringify(usState.watchlist));
+    syncUsWatchlistToServer();
+}
+
+async function initUsMarket() {
     renderUsList();
+
+    // 嘗試向後端硬碟持久化檔案同步（實現跨瀏覽器與跨 Origin 同步）
+    try {
+        const resp = await smartFetch(`${LOCAL_API_BASE}/us-watchlist`);
+        if (resp.ok) {
+            const serverList = await resp.json();
+            if (Array.isArray(serverList) && serverList.length > 0) {
+                usState.watchlist = serverList.filter(i => i && typeof i.symbol === 'string')
+                                             .map(i => ({ symbol: i.symbol, name: i.name || i.symbol }));
+                localStorage.setItem('usWatchlist', JSON.stringify(usState.watchlist));
+                renderUsList();
+            } else if (usState.watchlist.length > 0) {
+                syncUsWatchlistToServer();
+            }
+        }
+    } catch (e) {
+        console.warn('無法從伺服器載入美股清單，使用本地快取', e);
+    }
 
     // 新增自選：按鈕 + Enter
     const addBtn = document.getElementById('btn-add-us');
